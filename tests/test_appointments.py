@@ -9,16 +9,24 @@ import pytest
 
 from app.models.models import ReminderKind
 from app.services import appointments as service
+from app.services import doctors as doctor_service
 from app.services import medications as medication_service
 from app.services.errors import ValidationError
 from app.utils.timeutil import now_local
 from tests.test_medications import make_payload
 
 
-def make_appointment(db, when=None, **overrides):
+def make_doctor(db, name="Dr. Smith", **overrides):
+    payload = {"name": name, "occupation": "Otolaryngologist", "phone": "555-555-5555"}
+    payload.update(overrides)
+    return doctor_service.create_doctor(db, payload)
+
+
+def make_appointment(db, when=None, doctor=None, **overrides):
     when = when or (now_local() + timedelta(days=5))
+    doctor = doctor or make_doctor(db, f"Dr. {when.strftime('%H%M%S%f')}")
     payload = {
-        "doctor_name": "Dr. Smith",
+        "doctor_id": doctor.id,
         "scheduled_at": when.replace(second=0, microsecond=0).isoformat(),
         "treatment": "Ear infection",
         "notes": "Bring the previous lab results",
@@ -49,7 +57,7 @@ def test_moving_an_appointment_moves_its_reminders(db):
         db,
         appointment.id,
         {
-            "doctor_name": appointment.doctor_name,
+            "doctor_id": appointment.doctor_id,
             "scheduled_at": datetime(2026, 9, 1, 9, 0).isoformat(),
         },
     )
@@ -58,15 +66,22 @@ def test_moving_an_appointment_moves_its_reminders(db):
     assert by_kind[ReminderKind.HOURS_3.value] == datetime(2026, 9, 1, 6, 0)
 
 
-def test_doctor_name_is_required(db):
+def test_doctor_is_required(db):
     with pytest.raises(ValidationError) as exc:
-        service.create_appointment(db, {"doctor_name": "", "scheduled_at": "2026-08-21T10:00"})
-    assert exc.value.fields["doctor_name"] == "validation.doctor_required"
+        service.create_appointment(db, {"scheduled_at": "2026-08-21T10:00"})
+    assert exc.value.fields["doctor_id"] == "validation.doctor_required"
+
+
+def test_unknown_doctor_is_rejected(db):
+    with pytest.raises(ValidationError) as exc:
+        service.create_appointment(db, {"doctor_id": 999, "scheduled_at": "2026-08-21T10:00"})
+    assert exc.value.fields["doctor_id"] == "validation.doctor_not_found"
 
 
 def test_datetime_is_required(db):
+    doctor = make_doctor(db)
     with pytest.raises(ValidationError) as exc:
-        service.create_appointment(db, {"doctor_name": "Dr. Smith", "scheduled_at": ""})
+        service.create_appointment(db, {"doctor_id": doctor.id, "scheduled_at": ""})
     assert exc.value.fields["scheduled_at"] == "validation.appointment_datetime_required"
 
 
