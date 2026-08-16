@@ -56,6 +56,9 @@ BOOLEAN_SETTINGS = (
     "dose_after_30",
     "dose_overdue",
     "backup_enabled",
+    # v4: the desktop switch. Kept in this list so it saves, loads and
+    # round-trips exactly like every other switch on the page.
+    "start_with_windows",
 )
 
 
@@ -100,6 +103,13 @@ def settings_to_dict(settings: Settings) -> dict:
     }
     for key in BOOLEAN_SETTINGS:
         data[key] = bool(getattr(settings, key))
+
+    # v4: what the machine actually does, alongside what the setting says.
+    from app.desktop import startup as desktop_startup
+
+    data["startup"] = desktop_startup.read_state().to_dict()
+    data["app_lock_enabled"] = bool(settings.app_lock_enabled and settings.pin_hash)
+    data["auto_lock_minutes"] = int(settings.auto_lock_minutes or 0)
     return data
 
 
@@ -228,6 +238,16 @@ def update_settings(db: Session, data: dict) -> tuple[Settings, int]:
     for key in BOOLEAN_SETTINGS:
         if key in data:
             setattr(settings, key, _as_bool(data.get(key), getattr(settings, key)))
+
+    if "start_with_windows" in data:
+        # A stored preference that does nothing would be a lie, so the registry
+        # is changed here too. A machine that refuses the write says so instead
+        # of silently disagreeing with the switch.
+        from app.desktop import startup as desktop_startup
+
+        state = desktop_startup.apply(bool(settings.start_with_windows))
+        if state.supported and state.error:
+            raise ValidationError({"start_with_windows": "validation.startup_failed"})
 
     _apply_email_settings(settings, data)
 

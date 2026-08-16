@@ -26,6 +26,12 @@ def _render(request: Request, template: str, language: str, **context) -> HTMLRe
     )
 
 
+@router.get("/lock", response_class=HTMLResponse)
+def lock_page(request: Request, language: str = Depends(get_language)):
+    """The PIN screen. The only page served while the application is locked."""
+    return _render(request, "lock.html", language, page="lock")
+
+
 @router.get("/", response_class=HTMLResponse)
 def dashboard_page(request: Request, language: str = Depends(get_language)):
     return _render(request, "dashboard.html", language, page="dashboard")

@@ -12,7 +12,7 @@ from __future__ import annotations
 import secrets
 from pathlib import Path
 
-from fastapi import APIRouter, Depends, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, Response, UploadFile
 from sqlalchemy.orm import Session
 
 from app.config import (
@@ -36,6 +36,7 @@ from app.notifications.dispatcher import (
     pending_for_browser,
     run_tick,
 )
+from app.routes import lock_cache
 from app.routes.deps import get_language
 from app.services import appointments as appointment_service
 from app.services import doctors as doctor_service
@@ -59,13 +60,33 @@ router = APIRouter(prefix="/api")
 def bootstrap(
     request: Request, db: Session = Depends(get_db), language: str = Depends(get_language)
 ):
-    """Everything the frontend needs on first paint: catalog + settings."""
+    """Everything the frontend needs on first paint: catalog + settings.
+
+    Reachable while the application is locked, because the lock screen needs
+    its translations — but then it carries the catalog and nothing else. The
+    settings include e-mail addresses and schedule details, and none of that is
+    anybody's business before the PIN is entered.
+    """
+    from app.services import applock
+
     settings = get_settings(db)
+    if applock.is_locked(settings, token=request.cookies.get(applock.COOKIE_NAME, "")):
+        return {
+            "language": language,
+            "language_is_explicit": settings.language is not None,
+            "catalog": get_catalog(language),
+            "settings": None,
+            "locked": True,
+            "languages": available_languages(),
+            "version": APP_VERSION,
+        }
+
     return {
         "language": language,
         "language_is_explicit": settings.language is not None,
         "catalog": get_catalog(language),
         "settings": settings_to_dict(settings),
+        "locked": False,
         "options": {
             "frequencies": list(FREQUENCY_OPTIONS),
             "units": list(UNIT_OPTIONS),
@@ -257,8 +278,33 @@ async def upload_image(file: UploadFile = File(...)):
     if len(content) > MAX_IMAGE_BYTES:
         raise ValidationError({"image": "validation.image_too_large"})
     name = f"{secrets.token_hex(8)}{extension}"
+    UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
     (UPLOAD_DIR / name).write_bytes(content)
-    return {"image_path": name, "image_url": f"/static/uploads/{name}"}
+    return {"image_path": name, "image_url": f"/api/uploads/{name}"}
+
+
+@router.get("/uploads/{name}")
+def serve_upload(name: str):
+    """Serve a medication photograph.
+
+    A route rather than a mounted static folder, because `/static/` is on the
+    lock's allow-list — it has to be, or the lock screen would have no
+    stylesheet — and a photograph of someone's medication is medical data. Going
+    through the API means the same middleware that guards `/api/medications`
+    guards the picture attached to it.
+    """
+    from fastapi.responses import FileResponse
+
+    from app.services.errors import NotFoundError
+
+    candidate = (UPLOAD_DIR / name).resolve()
+    try:
+        inside = candidate.parent == UPLOAD_DIR.resolve()
+    except OSError:
+        inside = False
+    if not inside or not candidate.is_file():
+        raise NotFoundError()
+    return FileResponse(candidate)
 
 
 # --------------------------------------------------------------------------- #
@@ -522,8 +568,22 @@ def create_backup_now(db: Session = Depends(get_db)):
     from app.services.backup import MANUAL, create_backup, prune_backups
 
     settings = get_settings(db)
-    backup = create_backup(settings, MANUAL)
+    try:
+        backup = create_backup(settings, MANUAL)
+    except Exception as exc:
+        # The live database is never touched by a backup attempt, so there is
+        # nothing to roll back — only something to record and report. What is
+        # recorded is a translation key, never an English sentence: System
+        # Status renders it in whichever language the user is reading.
+        from app.services.errors import AppError
+
+        settings.last_backup_error = (
+            exc.message_key if isinstance(exc, AppError) else "error.backup_failed"
+        )
+        db.commit()
+        raise
     settings.last_backup_at = backup.created_at
+    settings.last_backup_error = None
     prune_backups(settings)
     db.commit()
     return {"ok": True, "backup": backup.to_dict(), "message": "message.backup_created"}
@@ -624,18 +684,166 @@ async def import_data(
     }
 
 
+@router.get("/health")
+def health(db: Session = Depends(get_db)):
+    """Small, cheap, and reachable while the application is locked.
+
+    The desktop launcher polls this to find out whether the database and the
+    scheduler came up, so it must not depend on either of them succeeding.
+    """
+    from app.services.system_status import health as collect_health
+
+    return collect_health(db)
+
+
 @router.get("/system/status")
 def system_status(db: Session = Depends(get_db)):
-    from app.config import DB_PATH
+    """The System Status page. Read-only: nothing here sends or writes anything.
 
-    return {
-        "version": APP_VERSION,
-        "scheduler": background_scheduler.status(),
-        "windows_notifications_available": windows_notifier.is_available(),
-        "windows_unavailable_reason": windows_notifier.unavailable_reason(),
-        "database_path": str(DB_PATH),
-        "medication_count": db.query(Medication).count(),
-    }
+    The v3 shape is kept alongside the new one so nothing that read the old
+    fields breaks.
+    """
+    from app.config import DB_PATH
+    from app.services.system_status import collect
+
+    payload = collect(db)
+    payload.update(
+        {
+            "version": APP_VERSION,
+            "scheduler": background_scheduler.status(),
+            "windows_notifications_available": windows_notifier.is_available(),
+            "windows_unavailable_reason": windows_notifier.unavailable_reason(),
+            "database_path": str(DB_PATH),
+            "medication_count": db.query(Medication).count(),
+        }
+    )
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# App lock
+# --------------------------------------------------------------------------- #
+def _hand_out_unlock_cookie(response: Response) -> None:
+    """Give this browser the proof that it is the one that unlocked.
+
+    A random per-unlock token, HttpOnly so no script can read it, SameSite=strict
+    so another site cannot ride on it, and never persisted — it exists only in
+    the running process, so closing the application invalidates every copy.
+    """
+    from app.services import applock
+
+    token = applock.current_token()
+    if token:
+        response.set_cookie(
+            applock.COOKIE_NAME, token,
+            httponly=True, samesite="strict", path="/",
+        )
+    else:
+        response.delete_cookie(applock.COOKIE_NAME, path="/")
+
+
+def _unlock_token(request: Request) -> str:
+    from app.services import applock
+
+    return request.cookies.get(applock.COOKIE_NAME, "")
+
+
+@router.get("/lock/state")
+def lock_state(request: Request, db: Session = Depends(get_db)):
+    """Reachable while locked - it is what the lock screen reads."""
+    from app.services import applock
+
+    settings = get_settings(db)
+    state = applock.state(settings, token=_unlock_token(request))
+    state["retry_in_seconds"] = applock.seconds_until_retry(settings)
+    return state
+
+
+@router.post("/lock/unlock")
+async def lock_unlock(request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services import applock
+
+    body = await request.json()
+    settings = get_settings(db)
+    state = applock.attempt_unlock(db, settings, body.get("pin"))
+    _hand_out_unlock_cookie(response)
+    lock_cache.invalidate()
+    return {"ok": True, **state}
+
+
+@router.post("/lock/lock")
+def lock_now(db: Session = Depends(get_db)):
+    from app.services import applock
+
+    applock.lock()
+    lock_cache.invalidate()
+    return {"ok": True, **applock.state(get_settings(db))}
+
+
+@router.post("/lock/enable")
+async def lock_enable(request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services import applock
+
+    body = await request.json()
+    settings = get_settings(db)
+    state = applock.enable(db, settings, body.get("pin"), body.get("confirm_pin"))
+    db.commit()
+    _hand_out_unlock_cookie(response)
+    lock_cache.invalidate()
+    return {"ok": True, "message": "message.app_lock_enabled", **state}
+
+
+@router.post("/lock/change")
+async def lock_change(request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services import applock
+
+    body = await request.json()
+    settings = get_settings(db)
+    state = applock.change(
+        db, settings, body.get("current_pin"), body.get("pin"), body.get("confirm_pin")
+    )
+    db.commit()
+    lock_cache.invalidate()
+    return {"ok": True, "message": "message.pin_changed", **state}
+
+
+@router.post("/lock/disable")
+async def lock_disable(request: Request, response: Response, db: Session = Depends(get_db)):
+    from app.services import applock
+
+    body = await request.json()
+    settings = get_settings(db)
+    state = applock.disable(db, settings, body.get("current_pin"))
+    db.commit()
+    _hand_out_unlock_cookie(response)
+    lock_cache.invalidate()
+    return {"ok": True, "message": "message.app_lock_disabled", **state}
+
+
+@router.post("/lock/auto")
+async def lock_auto(request: Request, db: Session = Depends(get_db)):
+    from app.services import applock
+
+    body = await request.json()
+    settings = get_settings(db)
+    state = applock.set_auto_lock(db, settings, body.get("auto_lock_minutes"))
+    db.commit()
+    lock_cache.invalidate()
+    return {"ok": True, **state}
+
+
+@router.post("/lock/activity")
+def lock_activity():
+    """The browser saying a human just did something.
+
+    Auto-lock cannot infer this from traffic: the page polls itself every thirty
+    seconds whether anyone is there or not. So the interface reports real input
+    — a click, a key — and only that resets the idle clock.
+    """
+    from app.services import applock
+
+    applock.touch()
+    return {"ok": True}
 
 
 __all__ = ["router", "NotFoundError"]
