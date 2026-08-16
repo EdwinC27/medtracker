@@ -48,7 +48,7 @@
       'appt_reminder_days_3', 'appt_reminder_day_1', 'appt_reminder_hours_3',
       'dose_before_30', 'dose_before_15', 'dose_before_5', 'dose_at_time',
       'dose_after_15', 'dose_after_30', 'dose_overdue',
-      'backup_enabled',
+      'backup_enabled', 'start_with_windows',
     ].forEach(function (name) { f[name].checked = Boolean(current[name]); });
 
     // --- email ---
@@ -296,7 +296,7 @@
       'appt_reminder_days_3', 'appt_reminder_day_1', 'appt_reminder_hours_3',
       'dose_before_30', 'dose_before_15', 'dose_before_5', 'dose_at_time',
       'dose_after_15', 'dose_after_30', 'dose_overdue',
-      'backup_enabled',
+      'backup_enabled', 'start_with_windows',
     ].forEach(function (name) { payload[name] = f[name].checked; });
 
     payload.email_recipient = f.email_recipient.value;

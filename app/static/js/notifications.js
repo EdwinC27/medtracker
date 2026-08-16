@@ -51,7 +51,7 @@
 
   async function poll() {
     try {
-      const data = await API.get('/api/notifications/pending');
+      const data = await API.get('/api/notifications/pending', { poll: true });
       const items = (data && data.items) || [];
       if (!items.length) return;
 
@@ -60,7 +60,8 @@
         if (canShow) show(item);
         else UI.notify.raw(item.title + ' — ' + item.body, 'info', 9000);
       });
-      await API.post('/api/notifications/delivered', { ids: items.map(function (i) { return i.id; }) });
+      await API.post('/api/notifications/delivered',
+        { ids: items.map(function (i) { return i.id; }) }, { poll: true });
       document.dispatchEvent(new CustomEvent('medtracker:notified'));
     } catch (e) {
       /* Offline or the server stopped — stay quiet, the next tick retries. */

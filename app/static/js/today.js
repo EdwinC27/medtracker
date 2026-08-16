@@ -9,8 +9,10 @@
   const el = UI.el;
   let refreshTimer = null;
 
-  async function render() {
-    const data = await API.get('/api/today');
+  async function render(options) {
+    // The 60-second refresh is the application talking to itself; it must not
+    // look like somebody is sitting there, or auto-lock would never fire.
+    const data = await API.get('/api/today', options);
     document.getElementById('today-date').textContent = F.dateLong(new Date());
 
     renderNextDose(data);
@@ -21,7 +23,12 @@
     renderActive(data.active_medications);
 
     if (!refreshTimer) {
-      refreshTimer = setInterval(render, 60000);
+      refreshTimer = setInterval(function () {
+        // A background refresh that fails is not the page's problem: the 423
+        // of a locked application already redirects, and anything else is
+        // simply retried a minute later.
+        render({ poll: true }).catch(function (err) { console.debug(err); });
+      }, 60000);
       // Registered once, not on every render, so listeners cannot pile up.
       document.addEventListener('medtracker:notified', function () { render(); });
     }
