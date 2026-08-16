@@ -23,8 +23,31 @@
   --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
+/* Dark palette, applied either by explicit choice or by following the system.
+   The two selectors carry the same variables on purpose: "dark" is a decision
+   the user made, "system" is one the operating system makes for them. */
+[data-theme="dark"] {
+  --bg: #12161d;
+  --surface: #1a2029;
+  --surface-2: #212936;
+  --border: #2c3543;
+  --text: #e8edf4;
+  --muted: #98a4b6;
+  --primary: #6f9dff;
+  --primary-dark: #4d7fe0;
+  --primary-soft: #1e2c47;
+  --success: #4cc38a;
+  --success-soft: #16311f;
+  --warning: #e0a94a;
+  --warning-soft: #33280f;
+  --danger: #f2726a;
+  --danger-soft: #3a1d1c;
+  --neutral-soft: #242c38;
+  --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 8px 24px rgba(0, 0, 0, .3);
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
+  [data-theme="system"] {
     --bg: #12161d;
     --surface: #1a2029;
     --surface-2: #212936;
@@ -153,6 +176,8 @@ a { color: var(--primary); }
 .badge--missed { background: var(--danger-soft); color: var(--danger); }
 .badge--completed { background: var(--neutral-soft); color: var(--muted); }
 .badge--scheduled { background: var(--primary-soft); color: var(--primary-dark); }
+/* History, not a failure: deliberately muted so it never reads as an alert. */
+.badge--before_registration { background: var(--neutral-soft); color: var(--muted); }
 .pill { background: var(--surface-2); border-radius: 999px; padding: .2rem .7rem; font-size: .8rem; color: var(--muted); }
 
 /* ------------------------------------------------------------- buttons */
@@ -188,6 +213,7 @@ a { color: var(--primary); }
 .dose-row--skipped { border-left: 4px solid var(--warning); }
 .dose-row--missed { border-left: 4px solid var(--danger); }
 .dose-row--scheduled { border-left: 4px solid var(--primary); }
+.dose-row--before_registration { border-left: 4px dashed var(--border); opacity: .78; }
 .dose-row__time { font-weight: 650; min-width: 5.5rem; }
 .dose-row__main { flex: 1; min-width: 0; }
 .dose-row__actions { display: flex; gap: .35rem; flex-wrap: wrap; }
@@ -275,3 +301,124 @@ textarea { resize: vertical; }
 /* -------------------------------------------------- v2 additions */
 .req { color: var(--danger); font-weight: 700; }
 .field--search { max-width: 420px; margin-bottom: 1rem; }
+
+
+/* ---------------------------------------------------------------- v3 --- */
+
+/* Top bar: search box and notification bell */
+.topsearch { flex: 1 1 220px; max-width: 340px; }
+.topsearch input {
+  width: 100%; padding: .4rem .7rem; border-radius: 999px;
+  border: 1px solid var(--border); background: var(--surface-2);
+  color: var(--text); font: inherit; font-size: .85rem;
+}
+.bell {
+  position: relative; text-decoration: none; font-size: 1.15rem;
+  padding: .3rem .45rem; border-radius: var(--radius-sm); line-height: 1;
+}
+.bell:hover { background: var(--surface-2); }
+.bell__count {
+  position: absolute; top: -2px; right: -4px; min-width: 17px; height: 17px;
+  padding: 0 4px; border-radius: 999px; background: var(--danger); color: #fff;
+  font-size: .68rem; font-weight: 700; display: grid; place-items: center;
+}
+
+/* Dose status marker in the timeline */
+.dose-mark {
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  display: grid; place-items: center; font-size: .8rem; font-weight: 700;
+  background: var(--neutral-soft); color: var(--muted);
+}
+.dose-mark--taken { background: var(--success-soft); color: var(--success); }
+.dose-mark--skipped { background: var(--warning-soft); color: var(--warning); }
+.dose-mark--missed { background: var(--danger-soft); color: var(--danger); }
+.dose-mark--scheduled { background: var(--primary-soft); color: var(--primary-dark); }
+.dose-mark--before_registration { background: var(--neutral-soft); color: var(--muted); }
+.snoozed { color: var(--warning); }
+
+/* Snooze menu */
+.snooze { position: relative; display: inline-block; }
+.snooze__menu {
+  position: absolute; right: 0; top: calc(100% + 4px); z-index: 30;
+  background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); box-shadow: var(--shadow); overflow: hidden;
+  min-width: 140px;
+}
+.snooze__option {
+  display: block; width: 100%; text-align: left; padding: .45rem .7rem;
+  background: none; border: none; font: inherit; font-size: .85rem;
+  color: var(--text); cursor: pointer;
+}
+.snooze__option:hover { background: var(--surface-2); }
+
+/* Calendar */
+.cal__head, .cal__grid { display: grid; grid-template-columns: repeat(7, 1fr); gap: 4px; }
+.cal__weekday {
+  text-align: center; font-size: .72rem; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; padding: .3rem 0;
+}
+.cal__cell {
+  min-height: 104px; background: var(--surface); border: 1px solid var(--border);
+  border-radius: var(--radius-sm); padding: .3rem; display: flex;
+  flex-direction: column; gap: 2px; overflow: hidden;
+}
+.cal__cell--outside { opacity: .45; }
+.cal__cell--today { border-color: var(--primary); box-shadow: inset 0 0 0 1px var(--primary); }
+.cal__daynum {
+  align-self: flex-start; background: none; border: none; cursor: pointer;
+  font: inherit; font-size: .8rem; font-weight: 700; color: var(--muted);
+  padding: 0 .2rem; border-radius: 4px;
+}
+.cal__daynum:hover { background: var(--surface-2); color: var(--text); }
+.cal__more { background: none; border: none; color: var(--primary); font: inherit; font-size: .72rem; cursor: pointer; text-align: left; padding: 0 .2rem; }
+
+.cal-event {
+  display: flex; justify-content: space-between; gap: .3rem; text-decoration: none;
+  font-size: .72rem; padding: .12rem .3rem; border-radius: 4px;
+  background: var(--primary-soft); color: var(--primary-dark);
+  border-left: 3px solid var(--primary); overflow: hidden; white-space: nowrap;
+}
+.cal-event__label { overflow: hidden; text-overflow: ellipsis; }
+.cal-event__time { opacity: .75; flex: none; }
+.cal-event--appointment { background: var(--success-soft); color: var(--success); border-left-color: var(--success); }
+.cal-event--treatment { background: var(--warning-soft); color: var(--warning); border-left-color: var(--warning); }
+.cal-event--taken { background: var(--success-soft); color: var(--success); border-left-color: var(--success); }
+.cal-event--missed { background: var(--danger-soft); color: var(--danger); border-left-color: var(--danger); }
+.cal-event--skipped { background: var(--warning-soft); color: var(--warning); border-left-color: var(--warning); }
+/* Dashed and faded: part of the history of the treatment, not of its schedule. */
+.cal-event--before_registration {
+  background: transparent; color: var(--muted);
+  border-left: 3px dashed var(--border); opacity: .85;
+}
+
+/* Timeline + search + notifications */
+.timeline-day {
+  margin: 1rem 0 .3rem; font-size: .8rem; text-transform: uppercase;
+  letter-spacing: .05em; color: var(--muted);
+}
+.timeline-entry { border-left: 3px solid var(--primary); }
+.search-hit { display: block; text-decoration: none; color: inherit; }
+.search-hit:hover { border-color: var(--primary); }
+.notification--unread { border-left: 3px solid var(--primary); background: var(--primary-soft); }
+.notification__icon { font-size: 1.3rem; }
+.notification__body { white-space: pre-line; margin: .3rem 0 0; font-size: .9rem; }
+
+/* Smaller screens */
+@media (max-width: 720px) {
+  .topsearch { order: 3; max-width: none; flex-basis: 100%; }
+  .cal__cell { min-height: 74px; }
+  .cal-event__time { display: none; }
+  .page-head { flex-direction: column; align-items: stretch; }
+  .page-head .row-actions { margin: 0; }
+}
+@media (max-width: 520px) {
+  .cal__cell { min-height: 58px; padding: .2rem; }
+  .cal-event { font-size: .62rem; }
+  .cal__weekday { font-size: .6rem; }
+  .meta-list { grid-template-columns: 1fr; gap: .1rem .5rem; }
+  .meta-list dt { margin-top: .4rem; }
+  .dose-row__time { min-width: 4.2rem; font-size: .9rem; }
+}
+
+/* A treatment's own entry in the medical timeline, next to the appointments. */
+.timeline-entry--treatment { border-left: 4px solid var(--warning); }
