@@ -500,7 +500,7 @@ def serialize_medication(
     data = {
         "id": medication.id,
         "name": medication.name,
-        "image_url": f"/static/uploads/{medication.image_path}" if medication.image_path else None,
+        "image_url": f"/api/uploads/{medication.image_path}" if medication.image_path else None,
         "dose_amount": medication.dose_amount,
         "dose_unit": medication.dose_unit,
         "quantity": medication.quantity,
@@ -582,7 +582,7 @@ def serialize_dose(dose: MedicationDose, medication: Medication | None = None) -
         "quantity": medication.quantity if medication else None,
         "form": medication.form if medication else None,
         "image_url": (
-            f"/static/uploads/{medication.image_path}"
+            f"/api/uploads/{medication.image_path}"
             if medication and medication.image_path
             else None
         ),

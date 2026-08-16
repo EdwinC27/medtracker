@@ -39,10 +39,19 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, futu
 
 
 def get_db() -> Iterator[Session]:
-    """FastAPI dependency: one session per request."""
+    """FastAPI dependency: one session per request.
+
+    A request that raises rolls its session back explicitly before closing it.
+    Closing alone would already discard the transaction, but saying so here is
+    the difference between relying on a library detail and stating the
+    guarantee the application makes: a failed operation changes nothing.
+    """
     db = SessionLocal()
     try:
         yield db
+    except Exception:
+        db.rollback()
+        raise
     finally:
         db.close()
 
@@ -67,9 +76,17 @@ def init_db() -> None:
     Order matters: migrations run against the raw file first, so an existing v1
     database is brought up to date before SQLAlchemy looks at it.
     """
+    from app.config import ensure_directories
     from app.database.migrations import run_migrations
     from app.models import models  # noqa: F401  (registers the mappers)
     from app.models.models import Base
+    from app.utils.datamove import prepare_data_folder
+
+    ensure_directories()
+    # Before the migrations, not after: if this is the packaged application's
+    # first run on a machine that has been using the source install, that data
+    # has to be in place before anything decides what schema it is looking at.
+    prepare_data_folder()
 
     report = run_migrations()
     if report["applied"]:
