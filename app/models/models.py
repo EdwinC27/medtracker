@@ -374,6 +374,28 @@ class Settings(Base):
     # NULL = the default folder, data/backups.
     backup_location: Mapped[str | None] = mapped_column(Text)
     last_backup_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Set when a backup attempt fails, cleared when one succeeds, so System
+    # Status can say "the last backup failed" instead of just showing a stale
+    # date and looking healthy.
+    last_backup_error: Mapped[str | None] = mapped_column(Text)
+
+    # --- desktop (v4) ---
+    # Whether the application registers itself to start when Windows starts.
+    # The registry entry is kept in step with this flag, so the switch really
+    # controls the behaviour instead of only recording a preference.
+    start_with_windows: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # --- app lock (v4) ---
+    # An optional local privacy lock, not an account system. The PIN itself is
+    # never stored: only a PBKDF2 hash of it, with its own random salt.
+    app_lock_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    pin_hash: Mapped[str | None] = mapped_column(String(200))
+    pin_salt: Mapped[str | None] = mapped_column(String(64))
+    # 0 = never lock on inactivity; otherwise the idle minutes before locking.
+    auto_lock_minutes: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # Simple brute-force friction, persisted so restarting does not clear it.
+    pin_failed_attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    pin_locked_until: Mapped[datetime | None] = mapped_column(DateTime)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_local, onupdate=now_local

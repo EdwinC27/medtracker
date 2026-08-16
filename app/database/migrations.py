@@ -31,6 +31,8 @@ Versions
         "before_registration", because the user was never able to mark them
 4 -> 5  notification.email_message_id, so every reminder for one dose can quote
         the earlier ones and mail clients group them into a single conversation
+5 -> 6  settings for the desktop build: start-with-Windows, the optional PIN
+        lock, and the last backup error System Status reports
 """
 
 from __future__ import annotations
@@ -45,7 +47,7 @@ from app.config import DATA_DIR, DB_PATH
 
 logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 5
+CURRENT_VERSION = 6
 BACKUP_DIR = DATA_DIR / "backups"
 
 
@@ -104,10 +106,11 @@ def detect_version(con: sqlite3.Connection) -> int:
         return int(version)
     if not _table_exists(con, "medications"):
         return CURRENT_VERSION  # brand new database
-    if "email_message_id" in _columns(con, "notifications"):
-        # The v5 shape. 3 -> 4 is data-only, so a file that has this column but
-        # no stamp was created by the current models and needs nothing.
+    if "app_lock_enabled" in _columns(con, "settings"):
+        # The v6 shape: created by the current models, nothing to do.
         return CURRENT_VERSION
+    if "email_message_id" in _columns(con, "notifications"):
+        return 5
     if "snoozed_until" in _columns(con, "medication_doses"):
         # v3 and v4 have the *same* schema - 3 -> 4 corrects data, not
         # structure - so the shape cannot tell them apart. Report 3 and let the
@@ -161,6 +164,9 @@ def run_migrations(db_path: Path | None = None) -> dict:
         if version < 5:
             _migrate_4_to_5(con)
             report["applied"].append("4->5")
+        if version < 6:
+            _migrate_5_to_6(con)
+            report["applied"].append("5->6")
 
         con.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
         con.commit()
@@ -547,3 +553,36 @@ def _migrate_4_to_5(con: sqlite3.Connection) -> None:
         raise RuntimeError(f"migration left dangling references: {violations[:5]}")
     con.commit()
     logger.info("migration: notifications can now carry an e-mail Message-ID")
+
+
+# --------------------------------------------------------------------------- #
+# 5 -> 6
+# --------------------------------------------------------------------------- #
+def _migrate_5_to_6(con: sqlite3.Connection) -> None:
+    """The settings the desktop build needs. Additive, all with defaults.
+
+    Both new behaviours default to OFF for a database that already exists, and
+    that is a deliberate departure from what a brand new one gets. Upgrading is
+    not consent: writing an entry into `HKCU\\...\\Run` puts a name into the
+    user's Windows startup list, and doing that silently because they installed
+    an update is not a decision the application should make for them. The switch
+    is in Settings, one click away, and is honoured from then on.
+    """
+    con.execute("BEGIN")
+    for column, ddl in (
+        ("last_backup_error", "TEXT"),
+        ("start_with_windows", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("app_lock_enabled", "BOOLEAN NOT NULL DEFAULT 0"),
+        ("pin_hash", "VARCHAR(200)"),
+        ("pin_salt", "VARCHAR(64)"),
+        ("auto_lock_minutes", "INTEGER NOT NULL DEFAULT 0"),
+        ("pin_failed_attempts", "INTEGER NOT NULL DEFAULT 0"),
+        ("pin_locked_until", "DATETIME"),
+    ):
+        _add_column(con, "settings", column, ddl)
+
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+    logger.info("migration: desktop and app-lock settings added")
