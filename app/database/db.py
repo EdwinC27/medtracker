@@ -62,9 +62,25 @@ def session_scope() -> Iterator[Session]:
 
 
 def init_db() -> None:
-    """Create all tables (no-op if they already exist) and seed settings."""
+    """Migrate, create any missing tables, and seed settings.
+
+    Order matters: migrations run against the raw file first, so an existing v1
+    database is brought up to date before SQLAlchemy looks at it.
+    """
+    from app.database.migrations import run_migrations
     from app.models import models  # noqa: F401  (registers the mappers)
     from app.models.models import Base
+
+    report = run_migrations()
+    if report["applied"]:
+        import logging
+
+        logging.getLogger(__name__).info(
+            "Database migrated %s -> %s (backup: %s)",
+            report["from"],
+            report["to"],
+            report["backup"] or "not needed",
+        )
 
     Base.metadata.create_all(bind=engine)
 

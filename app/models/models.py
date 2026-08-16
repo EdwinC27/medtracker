@@ -60,6 +60,39 @@ class NotificationType(str, enum.Enum):
     APPOINTMENT = "appointment"
 
 
+class DoseNotificationKind(str, enum.Enum):
+    """The six reminders around a dose, plus the one when it goes overdue."""
+
+    BEFORE_30 = "before_30"
+    BEFORE_15 = "before_15"
+    BEFORE_5 = "before_5"
+    AT_TIME = "at_time"
+    AFTER_15 = "after_15"
+    AFTER_30 = "after_30"
+    OVERDUE = "overdue"
+
+
+class Doctor(Base):
+    __tablename__ = "doctors"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    occupation: Mapped[str | None] = mapped_column(String(160))
+    phone: Mapped[str | None] = mapped_column(String(60))
+    notes: Mapped[str | None] = mapped_column(Text)
+
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime, default=now_local, onupdate=now_local
+    )
+
+    appointments: Mapped[list["Appointment"]] = relationship(
+        back_populates="doctor",
+        order_by="Appointment.scheduled_at.desc()",
+        passive_deletes=True,
+    )
+
+
 class AppointmentMedication(Base):
     """Join table: which medications were prescribed at which appointment."""
 
@@ -80,17 +113,21 @@ class Medication(Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     image_path: Mapped[str | None] = mapped_column(String(300))
 
+    # Optional since v2: only name, frequency and start date are required.
     # "500" + "mg" -> displayed as "500 mg"
-    dose_amount: Mapped[str] = mapped_column(String(40), nullable=False)
-    dose_unit: Mapped[str] = mapped_column(String(20), nullable=False, default="mg")
+    # No column defaults on purpose: "not specified" has to survive as NULL.
+    dose_amount: Mapped[str | None] = mapped_column(String(40))
+    dose_unit: Mapped[str | None] = mapped_column(String(20))
     # 1 + "capsule" -> displayed as "1 capsule" / "1 cápsula" (translated key)
-    quantity: Mapped[float] = mapped_column(Float, nullable=False, default=1)
-    form: Mapped[str] = mapped_column(String(30), nullable=False, default="tablet")
+    quantity: Mapped[float | None] = mapped_column(Float)
+    form: Mapped[str | None] = mapped_column(String(30))
 
     comments: Mapped[str | None] = mapped_column(Text)
 
     start_date: Mapped[date] = mapped_column(Date, nullable=False)
-    end_date: Mapped[date] = mapped_column(Date, nullable=False)
+    # NULL = open-ended treatment. Doses are then generated on a rolling
+    # horizon (see config.DOSE_HORIZON_DAYS) and topped up by the scheduler.
+    end_date: Mapped[date | None] = mapped_column(Date)
     frequency_hours: Mapped[int] = mapped_column(Integer, nullable=False)
     # Own copy of the first-dose time so a medication always knows its schedule
     # even if the global default changes later.
@@ -135,6 +172,9 @@ class MedicationDose(Base):
     )
     # When the user actually pressed Taken / Skipped (never set automatically).
     marked_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # When the status last changed, whoever changed it — including the
+    # automatic move to "missed", which `marked_at` deliberately does not cover.
+    status_changed_at: Mapped[datetime | None] = mapped_column(DateTime)
     notified_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     medication: Mapped["Medication"] = relationship(back_populates="doses")
@@ -144,7 +184,11 @@ class Appointment(Base):
     __tablename__ = "appointments"
 
     id: Mapped[int] = mapped_column(primary_key=True)
-    doctor_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    # Since v2 an appointment belongs to a Doctor record; the doctor's name and
+    # phone are stored once, on the doctor, and never copied here.
+    doctor_id: Mapped[int] = mapped_column(
+        ForeignKey("doctors.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
     scheduled_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     location: Mapped[str | None] = mapped_column(String(200))
     treatment: Mapped[str | None] = mapped_column(String(300))
@@ -152,6 +196,11 @@ class Appointment(Base):
     # Informational follow-up date given by the doctor. Creating a real
     # appointment from it is a one-click action in the UI.
     next_appointment_at: Mapped[datetime | None] = mapped_column(DateTime)
+    # Set when the user says "this is a follow-up of ..." while creating the
+    # appointment. Only an appointment scheduled earlier can be chosen.
+    follow_up_of_id: Mapped[int | None] = mapped_column(
+        ForeignKey("appointments.id", ondelete="SET NULL"), index=True
+    )
 
     reminder_days_3: Mapped[bool] = mapped_column(Boolean, default=True)
     reminder_day_1: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -171,6 +220,17 @@ class Appointment(Base):
     medications: Mapped[list["Medication"]] = relationship(
         secondary="appointment_medications",
         back_populates="appointments",
+    )
+    doctor: Mapped["Doctor"] = relationship(back_populates="appointments")
+
+    # The earlier appointment this one follows up on, and the later ones that
+    # follow up on this one.
+    follow_up_of: Mapped["Appointment | None"] = relationship(
+        back_populates="follow_ups", remote_side="Appointment.id"
+    )
+    follow_ups: Mapped[list["Appointment"]] = relationship(
+        back_populates="follow_up_of",
+        order_by="Appointment.scheduled_at",
     )
 
 
@@ -203,6 +263,11 @@ class Notification(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     type: Mapped[str] = mapped_column(String(20), nullable=False)
     reference_id: Mapped[int | None] = mapped_column(Integer)
+    # Which of the six dose offsets (or which appointment reminder) this is.
+    kind: Mapped[str | None] = mapped_column(String(20))
+    # "dose:41:before_30" — unique, so a scheduler restart can never queue the
+    # same reminder twice (INSERT is guarded by this constraint).
+    dedupe_key: Mapped[str | None] = mapped_column(String(80), unique=True, index=True)
     fire_at: Mapped[datetime] = mapped_column(DateTime, nullable=False, index=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=now_local)
 
@@ -214,6 +279,7 @@ class Notification(Base):
 
     windows_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
     browser_delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
+    email_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
     error: Mapped[str | None] = mapped_column(Text)
 
 
@@ -235,14 +301,41 @@ class Settings(Base):
         Integer, nullable=False, default=120
     )
 
+    # --- channels (independent of each other) ---
     windows_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
     browser_notifications: Mapped[bool] = mapped_column(Boolean, default=True)
+    email_notifications: Mapped[bool] = mapped_column(Boolean, default=False)
+
+    # --- what produces reminders ---
     medication_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
     appointment_reminders: Mapped[bool] = mapped_column(Boolean, default=True)
 
     appt_reminder_days_3: Mapped[bool] = mapped_column(Boolean, default=True)
     appt_reminder_day_1: Mapped[bool] = mapped_column(Boolean, default=True)
     appt_reminder_hours_3: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # --- the six reminders around each dose, individually switchable ---
+    dose_before_30: Mapped[bool] = mapped_column(Boolean, default=True)
+    dose_before_15: Mapped[bool] = mapped_column(Boolean, default=True)
+    dose_before_5: Mapped[bool] = mapped_column(Boolean, default=True)
+    dose_at_time: Mapped[bool] = mapped_column(Boolean, default=True)
+    dose_after_15: Mapped[bool] = mapped_column(Boolean, default=True)
+    dose_after_30: Mapped[bool] = mapped_column(Boolean, default=True)
+    dose_overdue: Mapped[bool] = mapped_column(Boolean, default=True)
+
+    # --- SMTP ---
+    # The password is NEVER stored here in clear text. On Windows it is
+    # encrypted with DPAPI (only this Windows account can read it back); see
+    # app/utils/secretstore.py.
+    email_recipient: Mapped[str | None] = mapped_column(String(320))
+    email_sender: Mapped[str | None] = mapped_column(String(320))
+    smtp_host: Mapped[str | None] = mapped_column(String(200))
+    smtp_port: Mapped[int] = mapped_column(Integer, nullable=False, default=587)
+    smtp_username: Mapped[str | None] = mapped_column(String(320))
+    smtp_password_protected: Mapped[str | None] = mapped_column(Text)
+    smtp_security: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="starttls"
+    )  # "starttls" | "ssl" | "none"
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_local, onupdate=now_local

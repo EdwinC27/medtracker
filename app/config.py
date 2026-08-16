@@ -31,7 +31,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "medtracker.log"
 
 APP_NAME = "MedTracker"
-APP_VERSION = "1.0.0"
+APP_VERSION = "2.0.0"
 
 HOST = os.environ.get("MEDTRACKER_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MEDTRACKER_PORT", "8000"))
@@ -78,3 +78,23 @@ FORM_OPTIONS = (
 # Longest treatment accepted by validation (guards against typos in the end
 # date creating an enormous dose schedule).
 MAX_TREATMENT_DAYS = 366 * 5
+
+# Open-ended treatments (no end date) get their doses generated this far ahead
+# and topped up on every scheduler tick, so the table never grows without
+# bound and the dashboard always knows the next dose.
+DOSE_HORIZON_DAYS = int(os.environ.get("MEDTRACKER_HORIZON_DAYS", "60"))
+
+# Reminders around each scheduled dose, in minutes relative to its time.
+# Order matters: it is the order shown in Settings.
+DOSE_NOTIFICATION_OFFSETS: tuple[tuple[str, int], ...] = (
+    ("before_30", -30),
+    ("before_15", -15),
+    ("before_5", -5),
+    ("at_time", 0),
+    ("after_15", 15),
+    ("after_30", 30),
+)
+
+# Marking a dose as taken this long before its scheduled time (or later) is
+# treated as normal and asks for no confirmation.
+TAKEN_CONFIRMATION_MINUTES = 30

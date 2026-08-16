@@ -6,9 +6,43 @@
     "time_24h": true
   },
   "format": {
-    "months": ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"],
-    "months_short": ["ene", "feb", "mar", "abr", "may", "jun", "jul", "ago", "sep", "oct", "nov", "dic"],
-    "weekdays": ["lunes", "martes", "miércoles", "jueves", "viernes", "sábado", "domingo"],
+    "months": [
+      "enero",
+      "febrero",
+      "marzo",
+      "abril",
+      "mayo",
+      "junio",
+      "julio",
+      "agosto",
+      "septiembre",
+      "octubre",
+      "noviembre",
+      "diciembre"
+    ],
+    "months_short": [
+      "ene",
+      "feb",
+      "mar",
+      "abr",
+      "may",
+      "jun",
+      "jul",
+      "ago",
+      "sep",
+      "oct",
+      "nov",
+      "dic"
+    ],
+    "weekdays": [
+      "lunes",
+      "martes",
+      "miércoles",
+      "jueves",
+      "viernes",
+      "sábado",
+      "domingo"
+    ],
     "date_time": "{date} — {time}",
     "date_long": "{day} de {month} de {year}",
     "date_short": "{day} {month_short}",
@@ -27,7 +61,8 @@
     "appointments": "Citas",
     "history": "Historial",
     "settings": "Configuración",
-    "menu": "Menú"
+    "menu": "Menú",
+    "doctors": "Doctores"
   },
   "common": {
     "save": "Guardar",
@@ -118,7 +153,11 @@
     "not_found": "Medicamento no encontrado.",
     "adherence": "Cumplimiento",
     "progress": "Avance",
-    "day_x_of_y": "Día {current} de {total}"
+    "day_x_of_y": "Día {current} de {total}",
+    "no_end_date": "Sin fecha de finalización",
+    "open_ended": "Tratamiento continuo",
+    "end_date_optional_hint": "Déjalo vacío para un tratamiento continuo sin fin previsto.",
+    "required_marker": "Los campos obligatorios están marcados con *"
   },
   "status": {
     "active": "Activo",
@@ -199,7 +238,14 @@
     "complete_body": "Se detienen los recordatorios y se quitan las dosis futuras. El historial se conserva.",
     "first_dose_change_title": "¿Cambiar la hora global de la primera dosis?",
     "first_dose_change_body": "Se recalcularán las dosis futuras de tus {count} medicamento(s) activo(s) para empezar a las {time}. Las dosis ya marcadas como tomadas, omitidas o perdidas nunca se modifican.",
-    "delete_confirm_word": "Eliminar"
+    "delete_confirm_word": "Eliminar",
+    "delete_doctor_title": "¿Eliminar este doctor?",
+    "delete_doctor_body": "«{name}» se eliminará definitivamente. Sus citas no se eliminan, así que un doctor con citas no puede borrarse hasta que las elimines o las reasignes.",
+    "complete_early_title": "¿Finalizar el tratamiento antes de tiempo?",
+    "complete_early_body": "Este medicamento está programado para terminar el {end}. Hoy es {today}. ¿Estás seguro de que deseas finalizarlo ahora?",
+    "complete_open_ended_body": "Este tratamiento no tiene fecha de finalización. ¿Estás seguro de que deseas finalizarlo ahora?",
+    "taken_early_title": "¿Marcar esta dosis como tomada?",
+    "taken_early_body": "Esta dosis está programada para las {scheduled}. Ahora son las {now}. ¿Estás seguro de que deseas marcarla como tomada?"
   },
   "dashboard": {
     "title": "Inicio",
@@ -269,7 +315,17 @@
     "not_found": "Cita no encontrada.",
     "upcoming": "Próximas",
     "past": "Pasadas",
-    "was_prescribed_at": "Indicado en la cita con {doctor} del {date}"
+    "was_prescribed_at": "Indicado en la cita con {doctor} del {date}",
+    "is_follow_up": "¿Es esta cita un seguimiento de una cita anterior?",
+    "follow_up_of": "Seguimiento de",
+    "follow_up_select": "Elige la cita anterior",
+    "follow_up_none": "No hay ninguna cita anterior que elegir.",
+    "follow_up_appointment": "Cita de seguimiento",
+    "follow_up_appointments": "Citas de seguimiento",
+    "follow_up_hint": "Solo pueden elegirse citas programadas antes que esta.",
+    "doctor_select": "Doctor",
+    "view_doctor": "Ver doctor",
+    "add_doctor_first": "Agrega primero un doctor — toda cita pertenece a uno."
   },
   "reminder": {
     "days_3": "3 días antes",
@@ -313,7 +369,32 @@
     "scheduler_stopped": "Detenido. Inicia la aplicación con start.bat para que se envíen los recordatorios.",
     "windows_unavailable": "Las notificaciones de Windows no están disponibles en este sistema ({reason}). La aplicación sigue funcionando; solo se desactivan los avisos de escritorio.",
     "database_location": "Archivo de base de datos",
-    "version": "Versión"
+    "version": "Versión",
+    "email_notifications": "Notificaciones por email",
+    "email_notifications_hint": "Envía los mismos recordatorios a tu correo. Funciona desde cualquier dispositivo y te deja un registro que puedes buscar después.",
+    "email_section": "Email",
+    "email_recipient": "Correo destinatario",
+    "email_sender": "Correo remitente",
+    "email_sender_hint": "Normalmente el mismo que el usuario SMTP. Si lo dejas vacío se usa el usuario.",
+    "smtp_host": "Servidor SMTP",
+    "smtp_port": "Puerto SMTP",
+    "smtp_username": "Usuario SMTP",
+    "smtp_password": "Contraseña SMTP",
+    "smtp_password_hint": "Déjalo vacío para conservar la contraseña ya guardada. Bórrala y guarda para olvidarla.",
+    "smtp_password_stored": "Hay una contraseña guardada.",
+    "smtp_security": "Seguridad de la conexión",
+    "security_starttls": "STARTTLS (puerto 587)",
+    "security_ssl": "SSL/TLS (puerto 465)",
+    "security_none": "Ninguna (no recomendado)",
+    "test_email": "Enviar un correo de prueba",
+    "test_email_sent": "Correo de prueba enviado a {recipient}.",
+    "test_email_failed": "No se pudo enviar el correo de prueba.",
+    "secret_dpapi": "La contraseña se cifra con DPAPI de Windows: solo tu cuenta de Windows, en este equipo, puede volver a leerla.",
+    "secret_file": "Este sistema no tiene DPAPI de Windows, así que la contraseña se guarda en data/secret_store.json con permisos solo para el propietario. Bastante más débil — está pensado para desarrollo.",
+    "dose_reminders": "Recordatorios de dosis",
+    "dose_reminders_hint": "Cada dosis programada puede avisarte varias veces. Apaga los que no quieras.",
+    "gmail_hint": "Para Gmail usa smtp.gmail.com, puerto 587 y una contraseña de aplicación — no la contraseña normal de tu cuenta.",
+    "missed_before_offsets": "Esto es menos que tu último recordatorio de dosis ({minutes} min después). La dosis pasa a atrasada antes de que ese recordatorio pueda enviarse, así que no se enviará."
   },
   "validation": {
     "required_field": "Este campo es obligatorio.",
@@ -335,7 +416,17 @@
     "image_type": "Solo se permiten imágenes PNG, JPG, GIF o WEBP.",
     "ending_soon_range": "Escribe un número entre 0 y 60.",
     "missed_range": "Escribe un número entre 5 y 1440 minutos.",
-    "language_invalid": "Idioma no admitido."
+    "language_invalid": "Idioma no admitido.",
+    "doctor_name_required": "Escribe el nombre del doctor.",
+    "doctor_not_found": "Ese doctor ya no existe.",
+    "doctor_has_appointments": "Este doctor todavía tiene citas. Elimínalas o muévelas primero.",
+    "follow_up_invalid": "Esa cita no se puede seleccionar.",
+    "follow_up_self": "Una cita no puede ser seguimiento de sí misma.",
+    "follow_up_not_earlier": "Elige una cita programada antes que esta.",
+    "email_invalid": "Escribe una dirección de correo válida.",
+    "email_incomplete": "Completa el servidor SMTP y el destinatario antes de activar el email.",
+    "port_invalid": "Escribe un puerto entre 1 y 65535.",
+    "follow_up_would_invert": "Otra cita es seguimiento de esta y está programada después. Mueve primero esa cita."
   },
   "message": {
     "medication_created": "Medicamento agregado.",
@@ -351,7 +442,10 @@
     "appointment_updated": "Cita actualizada.",
     "appointment_deleted": "Cita eliminada.",
     "settings_saved": "Configuración guardada.",
-    "doses_recalculated": "Se recalcularon {count} dosis futuras."
+    "doses_recalculated": "Se recalcularon {count} dosis futuras.",
+    "doctor_created": "Doctor agregado.",
+    "doctor_updated": "Doctor actualizado.",
+    "doctor_deleted": "Doctor eliminado."
   },
   "error": {
     "generic": "Algo salió mal. Inténtalo de nuevo.",
@@ -363,7 +457,8 @@
     "windows_notifications_unavailable": "Las notificaciones de Windows no están disponibles en este equipo.",
     "load_failed": "No se pudo cargar esta sección.",
     "save_failed": "No se pudieron guardar los cambios.",
-    "delete_failed": "No se pudo eliminar este elemento."
+    "delete_failed": "No se pudo eliminar este elemento.",
+    "email_failed": "No se pudo enviar el correo."
   },
   "notification": {
     "medication_title": "Recordatorio de medicamento",
@@ -374,6 +469,51 @@
     "appointment_body_day_1": "Mañana: {doctor}\n{datetime}",
     "appointment_body_hours_3": "En 3 horas: {doctor}\n{datetime}",
     "test_title": "Notificación de prueba",
-    "test_body": "Si puedes leer esto, las notificaciones funcionan."
+    "test_body": "Si puedes leer esto, las notificaciones funcionan.",
+    "dose_body": "{lead}\n{name}\n{details}",
+    "dose_lead_before": "En {minutes} minutos tienes que tomar:",
+    "dose_lead_at": "Es hora de tomar:",
+    "dose_lead_after": "Hace {minutes} minutos tocaba tomar:",
+    "dose_lead_overdue": "Esta dosis no se marcó y ahora está atrasada:",
+    "scheduled_time": "Hora programada"
+  },
+  "doctor": {
+    "title": "Doctores",
+    "singular": "Doctor",
+    "add": "Agregar doctor",
+    "edit": "Editar doctor",
+    "new": "Nuevo doctor",
+    "name": "Nombre",
+    "name_placeholder": "p. ej. Dr. Juan Pérez",
+    "occupation": "Especialidad",
+    "occupation_placeholder": "p. ej. Otorrinolaringólogo",
+    "phone": "Teléfono",
+    "phone_placeholder": "p. ej. 555-555-5555",
+    "notes": "Notas",
+    "notes_placeholder": "Clínica, seguro, lo que quieras recordar",
+    "appointments": "Citas",
+    "appointment_count": "{count} citas",
+    "appointment_count_one": "1 cita",
+    "no_appointments": "Todavía no hay citas con este doctor.",
+    "empty": "Todavía no hay doctores.",
+    "empty_hint": "Agrega un doctor para empezar a registrar citas.",
+    "empty_filtered": "Ningún doctor coincide con esta búsqueda.",
+    "not_found": "Doctor no encontrado.",
+    "select": "Elige un doctor",
+    "search_placeholder": "Buscar por nombre o especialidad"
+  },
+  "dose_offset": {
+    "before_30": "30 minutos antes",
+    "before_15": "15 minutos antes",
+    "before_5": "5 minutos antes",
+    "at_time": "A la hora programada",
+    "after_15": "15 minutos después",
+    "after_30": "30 minutos después",
+    "overdue": "Cuando pasa a atrasada"
+  },
+  "email": {
+    "dose_subject": "Recordatorio de medicamento: {name}",
+    "appointment_subject": "Recordatorio de cita: {doctor}",
+    "test_subject": "Correo de prueba de MedTracker"
   }
 }

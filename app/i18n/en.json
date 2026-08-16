@@ -6,9 +6,43 @@
     "time_24h": false
   },
   "format": {
-    "months": ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"],
-    "months_short": ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
-    "weekdays": ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"],
+    "months": [
+      "January",
+      "February",
+      "March",
+      "April",
+      "May",
+      "June",
+      "July",
+      "August",
+      "September",
+      "October",
+      "November",
+      "December"
+    ],
+    "months_short": [
+      "Jan",
+      "Feb",
+      "Mar",
+      "Apr",
+      "May",
+      "Jun",
+      "Jul",
+      "Aug",
+      "Sep",
+      "Oct",
+      "Nov",
+      "Dec"
+    ],
+    "weekdays": [
+      "Monday",
+      "Tuesday",
+      "Wednesday",
+      "Thursday",
+      "Friday",
+      "Saturday",
+      "Sunday"
+    ],
     "date_time": "{date} — {time}",
     "date_long": "{month} {day}, {year}",
     "date_short": "{month_short} {day}",
@@ -27,7 +61,8 @@
     "appointments": "Appointments",
     "history": "History",
     "settings": "Settings",
-    "menu": "Menu"
+    "menu": "Menu",
+    "doctors": "Doctors"
   },
   "common": {
     "save": "Save",
@@ -118,7 +153,11 @@
     "not_found": "Medication not found.",
     "adherence": "Adherence",
     "progress": "Progress",
-    "day_x_of_y": "Day {current} of {total}"
+    "day_x_of_y": "Day {current} of {total}",
+    "no_end_date": "No end date",
+    "open_ended": "Ongoing treatment",
+    "end_date_optional_hint": "Leave empty for an ongoing treatment with no planned end.",
+    "required_marker": "Required fields are marked with *"
   },
   "status": {
     "active": "Active",
@@ -199,7 +238,14 @@
     "complete_body": "Reminders stop and upcoming doses are removed. The history is kept.",
     "first_dose_change_title": "Change the global first dose time?",
     "first_dose_change_body": "Upcoming doses of your {count} active medication(s) will be recalculated to start at {time}. Doses already marked as taken, skipped or missed are never changed.",
-    "delete_confirm_word": "Delete"
+    "delete_confirm_word": "Delete",
+    "delete_doctor_title": "Delete this doctor?",
+    "delete_doctor_body": "\"{name}\" will be permanently deleted. Their appointments are not deleted, so a doctor with appointments cannot be removed until you delete or reassign those first.",
+    "complete_early_title": "Finish this treatment early?",
+    "complete_early_body": "This medication is scheduled to end on {end}. Today is {today}. Are you sure you want to complete it now?",
+    "complete_open_ended_body": "This treatment has no end date. Are you sure you want to complete it now?",
+    "taken_early_title": "Mark this dose as taken?",
+    "taken_early_body": "This dose is scheduled for {scheduled}. It is currently {now}. Are you sure you want to mark it as taken now?"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -269,7 +315,17 @@
     "not_found": "Appointment not found.",
     "upcoming": "Upcoming",
     "past": "Past",
-    "was_prescribed_at": "Prescribed at the appointment with {doctor} on {date}"
+    "was_prescribed_at": "Prescribed at the appointment with {doctor} on {date}",
+    "is_follow_up": "Is this a follow-up of a previous appointment?",
+    "follow_up_of": "Follow-up of",
+    "follow_up_select": "Select the previous appointment",
+    "follow_up_none": "No earlier appointment to choose from.",
+    "follow_up_appointment": "Follow-up appointment",
+    "follow_up_appointments": "Follow-up appointments",
+    "follow_up_hint": "Only appointments scheduled before this one can be chosen.",
+    "doctor_select": "Doctor",
+    "view_doctor": "View doctor",
+    "add_doctor_first": "Add a doctor first — every appointment belongs to one."
   },
   "reminder": {
     "days_3": "3 days before",
@@ -313,7 +369,32 @@
     "scheduler_stopped": "Not running. Start the app with start.bat so reminders can fire.",
     "windows_unavailable": "Windows notifications are unavailable on this system ({reason}). The app keeps working; only desktop toasts are off.",
     "database_location": "Database file",
-    "version": "Version"
+    "version": "Version",
+    "email_notifications": "Email notifications",
+    "email_notifications_hint": "Sends the same reminders to your inbox. Works from any device, and keeps a record you can search later.",
+    "email_section": "Email",
+    "email_recipient": "Recipient email",
+    "email_sender": "Sender email",
+    "email_sender_hint": "Usually the same as the SMTP username. Left empty, the username is used.",
+    "smtp_host": "SMTP host",
+    "smtp_port": "SMTP port",
+    "smtp_username": "SMTP username",
+    "smtp_password": "SMTP password",
+    "smtp_password_hint": "Leave empty to keep the password already stored. Clear it and save to forget it.",
+    "smtp_password_stored": "A password is stored.",
+    "smtp_security": "Connection security",
+    "security_starttls": "STARTTLS (port 587)",
+    "security_ssl": "SSL/TLS (port 465)",
+    "security_none": "None (not recommended)",
+    "test_email": "Send a test email",
+    "test_email_sent": "Test email sent to {recipient}.",
+    "test_email_failed": "The test email could not be sent.",
+    "secret_dpapi": "The password is encrypted with Windows DPAPI: only your Windows account, on this machine, can read it back.",
+    "secret_file": "This system has no Windows DPAPI, so the password is kept in data/secret_store.json with owner-only permissions. Noticeably weaker — it is meant for development.",
+    "dose_reminders": "Dose reminders",
+    "dose_reminders_hint": "Each scheduled dose can be announced several times. Turn off the ones you do not want.",
+    "gmail_hint": "For Gmail use smtp.gmail.com, port 587, and an app password — not your normal account password.",
+    "missed_before_offsets": "This is shorter than your latest dose reminder ({minutes} min after). A dose becomes overdue before that reminder can fire, so it will not be sent."
   },
   "validation": {
     "required_field": "This field is required.",
@@ -335,7 +416,17 @@
     "image_type": "Only PNG, JPG, GIF or WEBP images are allowed.",
     "ending_soon_range": "Enter a number between 0 and 60.",
     "missed_range": "Enter a number between 5 and 1440 minutes.",
-    "language_invalid": "Unsupported language."
+    "language_invalid": "Unsupported language.",
+    "doctor_name_required": "Enter the doctor's name.",
+    "doctor_not_found": "That doctor no longer exists.",
+    "doctor_has_appointments": "This doctor still has appointments. Delete or move them first.",
+    "follow_up_invalid": "That appointment cannot be selected.",
+    "follow_up_self": "An appointment cannot be a follow-up of itself.",
+    "follow_up_not_earlier": "Choose an appointment scheduled before this one.",
+    "email_invalid": "Enter a valid email address.",
+    "email_incomplete": "Fill in the SMTP host and the recipient before enabling email.",
+    "port_invalid": "Enter a port between 1 and 65535.",
+    "follow_up_would_invert": "Another appointment follows up on this one and is scheduled later. Move that one first."
   },
   "message": {
     "medication_created": "Medication added.",
@@ -351,7 +442,10 @@
     "appointment_updated": "Appointment updated.",
     "appointment_deleted": "Appointment deleted.",
     "settings_saved": "Settings saved.",
-    "doses_recalculated": "{count} upcoming doses were recalculated."
+    "doses_recalculated": "{count} upcoming doses were recalculated.",
+    "doctor_created": "Doctor added.",
+    "doctor_updated": "Doctor updated.",
+    "doctor_deleted": "Doctor deleted."
   },
   "error": {
     "generic": "Something went wrong. Please try again.",
@@ -363,7 +457,8 @@
     "windows_notifications_unavailable": "Windows notifications are not available on this machine.",
     "load_failed": "Could not load this section.",
     "save_failed": "Could not save your changes.",
-    "delete_failed": "Could not delete this item."
+    "delete_failed": "Could not delete this item.",
+    "email_failed": "The email could not be sent."
   },
   "notification": {
     "medication_title": "Medication reminder",
@@ -374,6 +469,51 @@
     "appointment_body_day_1": "Tomorrow: {doctor}\n{datetime}",
     "appointment_body_hours_3": "In 3 hours: {doctor}\n{datetime}",
     "test_title": "Test notification",
-    "test_body": "If you can read this, notifications are working."
+    "test_body": "If you can read this, notifications are working.",
+    "dose_body": "{lead}\n{name}\n{details}",
+    "dose_lead_before": "In {minutes} minutes you need to take:",
+    "dose_lead_at": "It's time to take:",
+    "dose_lead_after": "{minutes} minutes ago you were due to take:",
+    "dose_lead_overdue": "This dose was not marked and is now overdue:",
+    "scheduled_time": "Scheduled time"
+  },
+  "doctor": {
+    "title": "Doctors",
+    "singular": "Doctor",
+    "add": "Add doctor",
+    "edit": "Edit doctor",
+    "new": "New doctor",
+    "name": "Name",
+    "name_placeholder": "e.g. Dr. John Smith",
+    "occupation": "Occupation / Specialty",
+    "occupation_placeholder": "e.g. Otolaryngologist",
+    "phone": "Phone number",
+    "phone_placeholder": "e.g. 555-555-5555",
+    "notes": "Notes",
+    "notes_placeholder": "Clinic, insurance, anything you want to remember",
+    "appointments": "Appointments",
+    "appointment_count": "{count} appointments",
+    "appointment_count_one": "1 appointment",
+    "no_appointments": "No appointments with this doctor yet.",
+    "empty": "No doctors yet.",
+    "empty_hint": "Add a doctor to start recording appointments.",
+    "empty_filtered": "No doctors match this search.",
+    "not_found": "Doctor not found.",
+    "select": "Select a doctor",
+    "search_placeholder": "Search by name or specialty"
+  },
+  "dose_offset": {
+    "before_30": "30 minutes before",
+    "before_15": "15 minutes before",
+    "before_5": "5 minutes before",
+    "at_time": "At the scheduled time",
+    "after_15": "15 minutes late",
+    "after_30": "30 minutes late",
+    "overdue": "When it becomes overdue"
+  },
+  "email": {
+    "dose_subject": "Medication reminder: {name}",
+    "appointment_subject": "Appointment reminder: {doctor}",
+    "test_subject": "MedTracker test email"
   }
 }

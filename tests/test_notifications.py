@@ -238,3 +238,38 @@ def test_tick_also_marks_missed_doses_and_completes_treatments(db):
     assert summary["missed_doses"] > 0
     assert medication.status == "completed"
     assert all(dose.status != DoseStatus.SCHEDULED.value for dose in medication.doses)
+
+
+def test_moving_an_appointment_still_sends_its_reminder(db):
+    """Regression: the dedupe key used to ignore the date, so a rescheduled
+    appointment was silently blocked by its own old reminder."""
+    from app.services import appointments as appointment_service
+
+    appointment = make_appointment(db, when=now_local() + timedelta(hours=23, minutes=30))
+    db.commit()
+    assert run_tick(db, send_windows=False)["appointment_notifications"] >= 1
+
+    # Push it a week out and back into the 1-day window.
+    appointment_service.update_appointment(
+        db,
+        appointment.id,
+        {
+            "doctor_id": appointment.doctor_id,
+            "scheduled_at": (now_local() + timedelta(days=7, hours=23, minutes=30)).isoformat(),
+        },
+    )
+    db.commit()
+    # Nothing is due yet at the new date...
+    assert run_tick(db, send_windows=False)["appointment_notifications"] == 0
+
+    # ...but once it is, the new reminder is not blocked by the old row.
+    appointment_service.update_appointment(
+        db,
+        appointment.id,
+        {
+            "doctor_id": appointment.doctor_id,
+            "scheduled_at": (now_local() + timedelta(hours=22, minutes=30)).isoformat(),
+        },
+    )
+    db.commit()
+    assert run_tick(db, send_windows=False)["appointment_notifications"] >= 1
