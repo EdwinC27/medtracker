@@ -107,6 +107,46 @@
     return T.t('medication.dose_summary', { dose: parts[0], quantity: parts[1] });
   }
 
+  /* Appearance. The server owns the preference; localStorage is only a mirror
+     so the inline script in base.html can apply it before the first paint. */
+  function normalizeTheme(theme) {
+    return ['light', 'dark', 'system'].indexOf(theme) === -1 ? 'system' : theme;
+  }
+
+  /* Show a theme without committing to it: used while the Settings select is
+     being played with, so an unsaved choice cannot outlive the page. */
+  function previewTheme(theme) {
+    document.documentElement.setAttribute('data-theme', normalizeTheme(theme));
+  }
+
+  function applyTheme(theme) {
+    const value = normalizeTheme(theme);
+    previewTheme(value);
+    try { localStorage.setItem('medtracker-theme', value); } catch (e) { /* private mode */ }
+  }
+
+  /* The unread badge on the bell, refreshed after anything that could change it. */
+  async function refreshBell() {
+    const badge = document.getElementById('bell-count');
+    if (!badge) return;
+    try {
+      const data = await API.get('/api/notifications/unread-count');
+      const count = Number(data.unread || 0);
+      badge.textContent = count > 99 ? '99+' : String(count);
+      badge.classList.toggle('hidden', count === 0);
+    } catch (e) { /* the badge is decoration; never break a page over it */ }
+  }
+
+  function setupSearch() {
+    const form = document.getElementById('topsearch');
+    if (!form) return;
+    form.addEventListener('submit', function (event) {
+      event.preventDefault();
+      const value = document.getElementById('topsearch-input').value.trim();
+      if (value) window.location.href = '/search?q=' + encodeURIComponent(value);
+    });
+  }
+
   function setupChrome() {
     const toggle = document.getElementById('nav-toggle');
     const nav = document.getElementById('main-nav');
@@ -123,6 +163,7 @@
         if (dialog) dialog.close('cancel');
       }
     });
+    setupSearch();
   }
 
   /* Page bootstrap: wait for translations, then run the page's render(). */
@@ -131,7 +172,10 @@
       setupChrome();
       T.ready()
         .then(function () {
+          applyTheme((T.settings && T.settings.theme) || 'system');
           Notifications.start();
+          refreshBell();
+          document.addEventListener('medtracker:notified', refreshBell);
           return render();
         })
         .catch(function (err) {
@@ -152,5 +196,8 @@
     thumb: thumb,
     doseSummary: doseSummary,
     page: page,
+    applyTheme: applyTheme,
+    previewTheme: previewTheme,
+    refreshBell: refreshBell,
   };
 })();

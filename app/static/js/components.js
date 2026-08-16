@@ -4,21 +4,56 @@
 
   const el = UI.el;
 
-  /* A single dose line with its status and the Taken / Skipped buttons. */
+  /* The tick / circle in front of a dose, so status reads at a glance. */
+  const STATUS_MARK = {
+    taken: '✓', skipped: '×', missed: '!', scheduled: '○',
+    // Not a warning sign: this dose predates the medication's own registration.
+    before_registration: '·',
+  };
+
+  /* One listener for the whole page closes any open snooze menu. Registering it
+     per row would leak a listener every time a list is re-rendered, and Today
+     re-renders itself every minute. */
+  document.addEventListener('click', function () {
+    document.querySelectorAll('.snooze__menu').forEach(function (menu) {
+      menu.classList.add('hidden');
+    });
+  });
+
+  /* A single dose line with its status and the Taken / Skipped / Snooze actions. */
   function doseRow(dose, onChanged, options) {
     const opts = options || {};
     const row = el('div', 'dose-row dose-row--' + dose.status);
 
+    if (opts.timeline) {
+      row.appendChild(el('span', 'dose-mark dose-mark--' + dose.status,
+        STATUS_MARK[dose.status] || '○'));
+    }
     row.appendChild(el('div', 'dose-row__time', F.time(dose.scheduled_at)));
 
     const main = el('div', 'dose-row__main');
     if (!opts.hideName) {
       main.appendChild(el('strong', null, dose.medication_name || ''));
     }
-    const meta = el('div', 'card__meta', UI.doseSummary(dose));
-    main.appendChild(meta);
+    const summary = UI.doseSummary(dose);
+    if (summary) main.appendChild(el('div', 'card__meta', summary));
     if (opts.showDate) {
       main.appendChild(el('div', 'card__meta', F.dateLong(dose.scheduled_at)));
+    }
+    // When it was actually handled — the scheduled time above never moves.
+    if (dose.marked_at && dose.status === 'taken') {
+      main.appendChild(el('div', 'card__meta', T.t('today.taken_at', { time: F.time(dose.marked_at) })));
+    } else if (dose.marked_at && dose.status === 'skipped') {
+      main.appendChild(el('div', 'card__meta', T.t('today.skipped_at', { time: F.time(dose.marked_at) })));
+    } else if (dose.status === 'missed' && dose.status_changed_at) {
+      main.appendChild(el('div', 'card__meta', T.t('today.missed_at', { time: F.time(dose.status_changed_at) })));
+    }
+    // No per-row explanation for a historical dose: the badge says what it is,
+    // and repeating the sentence on eighty rows is noise. The screens that list
+    // them explain it once, above the list.
+    if (dose.snoozed_until) {
+      main.appendChild(el('div', 'card__meta snoozed',
+        T.t('today.snoozed_until', { time: F.time(dose.snoozed_until) })));
     }
     row.appendChild(main);
 
@@ -30,6 +65,9 @@
     } else {
       actions.appendChild(button('actions.mark_taken', 'btn--success', 'taken'));
       actions.appendChild(button('actions.mark_skipped', 'btn--ghost', 'skipped'));
+      // can_snooze comes from the server: a dose whose reminders have not
+      // started yet has nothing to postpone.
+      if (dose.can_snooze) actions.appendChild(snoozeButton(dose, onChanged));
     }
     row.appendChild(actions);
 
@@ -62,6 +100,40 @@
     }
 
     return row;
+  }
+
+  /* Snooze: a small menu of delays. It moves the reminder only — the dose keeps
+     its scheduled time and stays pending. */
+  function snoozeButton(dose, onChanged) {
+    const wrap = el('span', 'snooze');
+    const btn = el('button', 'btn btn--sm btn--ghost', T.t('snooze.action'));
+    btn.type = 'button';
+    const menu = el('div', 'snooze__menu hidden');
+
+    ((T.settings && T.settings.snooze_options) || [10, 30, 60]).forEach(function (minutes) {
+      const option = el('button', 'snooze__option', T.t('snooze.minutes_' + minutes));
+      option.type = 'button';
+      option.addEventListener('click', async function () {
+        menu.classList.add('hidden');
+        try {
+          const updated = await API.post('/api/doses/' + dose.id + '/snooze', { minutes: minutes });
+          UI.notify.success('snooze.done', { time: F.time(updated.snoozed_until) });
+          if (onChanged) onChanged();
+        } catch (err) { UI.notify.error(err); }
+      });
+      menu.appendChild(option);
+    });
+
+    btn.addEventListener('click', function (event) {
+      event.stopPropagation();
+      document.querySelectorAll('.snooze__menu').forEach(function (other) {
+        if (other !== menu) other.classList.add('hidden');
+      });
+      menu.classList.toggle('hidden');
+    });
+    wrap.appendChild(btn);
+    wrap.appendChild(menu);
+    return wrap;
   }
 
   /* The threshold comes from the server (scheduled time minus 30 minutes), so
@@ -183,6 +255,7 @@
 
   window.C = {
     doseRow: doseRow,
+    snoozeButton: snoozeButton,
     medicationCard: medicationCard,
     medicationActions: medicationActions,
   };

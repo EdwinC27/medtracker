@@ -38,10 +38,51 @@
     }
     card.appendChild(meta);
 
+    // Last and next visit, read straight off the appointment list.
+    const now = new Date();
+    const sorted = (doctor.appointments || []).slice().sort(function (a, b) {
+      return F.parse(a.scheduled_at) - F.parse(b.scheduled_at);
+    });
+    const past = sorted.filter(function (a) { return F.parse(a.scheduled_at) < now; });
+    const future = sorted.filter(function (a) { return F.parse(a.scheduled_at) >= now; });
+
+    if (past.length) {
+      meta.appendChild(el('dt', null, T.t('appointment.past')));
+      meta.appendChild(appointmentCell(past[past.length - 1]));
+    }
+    if (future.length) {
+      meta.appendChild(el('dt', null, T.t('appointment.upcoming')));
+      meta.appendChild(appointmentCell(future[0]));
+    }
+
+    // Every medication reached through this doctor's appointments - the chain
+    // Doctor -> Appointment -> Medication, never a direct link.
+    const medications = {};
+    sorted.forEach(function (appointment) {
+      (appointment.medications || []).forEach(function (medication) {
+        medications[medication.id] = medication;
+      });
+    });
+    const names = Object.keys(medications);
+    if (names.length) {
+      meta.appendChild(el('dt', null, T.t('appointment.medications')));
+      const cell = el('dd');
+      names.forEach(function (id, index) {
+        if (index) cell.appendChild(document.createTextNode(', '));
+        const link = el('a', null, medications[id].name);
+        link.href = '/medications/' + id;
+        cell.appendChild(link);
+      });
+      meta.appendChild(cell);
+    }
+
     const footer = el('div', 'card__footer');
     const add = el('a', 'btn btn--sm btn--primary', T.t('appointment.add'));
     add.href = '/appointments?new=1&doctor_id=' + doctor.id;
     footer.appendChild(add);
+    const timeline = el('a', 'btn btn--sm btn--ghost', T.t('timeline.title'));
+    timeline.href = '/history?tab=timeline';
+    footer.appendChild(timeline);
     card.appendChild(footer);
     container.appendChild(card);
 
@@ -84,6 +125,17 @@
     }
     section.appendChild(list);
     container.appendChild(section);
+  }
+
+  function appointmentCell(appointment) {
+    const cell = el('dd');
+    const link = el('a', null, F.dateTime(appointment.scheduled_at));
+    link.href = '/appointments/' + appointment.id;
+    cell.appendChild(link);
+    if (appointment.treatment) {
+      cell.appendChild(document.createTextNode(' — ' + appointment.treatment));
+    }
+    return cell;
   }
 
   UI.page(render);

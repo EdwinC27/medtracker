@@ -3,7 +3,7 @@
   'use strict';
 
   const el = UI.el;
-  const state = { filter: 'all', editing: null, imagePath: undefined, appointments: [] };
+  const state = { filter: 'all', editing: null, imagePath: undefined, appointments: [], templates: [] };
 
   const dialog = function () { return document.getElementById('medication-dialog'); };
   const form = function () { return document.getElementById('medication-form'); };
@@ -56,6 +56,13 @@
     } catch (e) { state.appointments = []; }
   }
 
+  async function loadTemplates() {
+    try {
+      const data = await API.get('/api/medications?status=all');
+      state.templates = data.items;
+    } catch (e) { state.templates = []; }
+  }
+
   function openDialog(medication) {
     state.editing = medication || null;
     state.imagePath = undefined;
@@ -79,6 +86,8 @@
         : []
     );
 
+    renderTemplatePicker(Boolean(medication));
+
     const today = new Date();
     if (medication) {
       f.name.value = medication.name;
@@ -98,6 +107,47 @@
 
     updatePreview();
     dialog().showModal();
+  }
+
+  /* "Use a previous medication": copies what describes the medicine and leaves
+     the treatment itself blank, so the new one is genuinely a new treatment. */
+  function renderTemplatePicker(editing) {
+    const box = document.getElementById('med-template');
+    const wrap = document.getElementById('med-template-field');
+    wrap.classList.toggle('hidden', editing);
+    if (editing) return;
+
+    box.textContent = '';
+    const none = el('option', null, T.t('medication.create_new'));
+    none.value = '';
+    box.appendChild(none);
+
+    // Newest first, one entry per distinct name.
+    const seen = {};
+    state.templates.forEach(function (item) {
+      if (seen[item.name.toLowerCase()]) return;
+      seen[item.name.toLowerCase()] = true;
+      const option = el('option', null, item.name);
+      option.value = item.id;
+      box.appendChild(option);
+    });
+    box.value = '';
+  }
+
+  function applyTemplate(id) {
+    const f = form();
+    const source = state.templates.filter(function (item) { return String(item.id) === String(id); })[0];
+    if (!source) return;
+
+    f.name.value = source.name || '';
+    f.dose_amount.value = source.dose_amount || '';
+    f.quantity.value = source.quantity === null ? '' : source.quantity;
+    f.comments.value = source.comments || '';
+    if (source.dose_unit) f.dose_unit.value = source.dose_unit;
+    if (source.form) f.form.value = source.form;
+    f.frequency_hours.value = String(source.frequency_hours);
+    // Deliberately NOT copied: dates, status, schedule and dose history.
+    updatePreview();
   }
 
   /* Checkbox list: a medication can be linked to more than one appointment, so
@@ -212,7 +262,11 @@
 
   /* --------------------------------------------------------------- setup */
   async function render() {
-    await loadAppointments();
+    await Promise.all([loadAppointments(), loadTemplates()]);
+
+    document.getElementById('med-template').addEventListener('change', function () {
+      if (this.value) applyTemplate(this.value);
+    });
 
     document.getElementById('status-filters').addEventListener('click', function (event) {
       const chip = event.target.closest('[data-filter]');
