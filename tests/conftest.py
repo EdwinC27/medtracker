@@ -67,7 +67,11 @@ def client(tmp_path, monkeypatch):
             session.close()
 
     app.dependency_overrides[db_module.get_db] = override_get_db
-    with TestClient(app) as test_client:
+    # A loopback base URL rather than the default "testserver": the application
+    # refuses a `Host` header it does not recognise (see `app/routes/origin.py`),
+    # and a client that does not look like the real browser would be testing a
+    # different application from the one that ships.
+    with TestClient(app, base_url="http://127.0.0.1:8000") as test_client:
         yield test_client
     app.dependency_overrides.clear()
     engine.dispose()

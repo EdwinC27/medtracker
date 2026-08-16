@@ -103,7 +103,11 @@ def test_dose_can_be_marked_and_unmarked(client):
 
 
 def test_dashboard_reflects_the_data(client):
-    client.post("/api/medications", json=payload())
+    # A first dose a couple of minutes from now: today, and after the moment the
+    # medication is registered, so it is a dose the application can manage
+    # rather than one recorded as history.
+    soon = (now_local() + timedelta(minutes=2)).strftime("%H:%M")
+    client.post("/api/medications", json=payload(first_dose_time=soon))
     doctor = client.post("/api/doctors", json={"name": "Dr. Smith"}).json()
     client.post(
         "/api/appointments",
@@ -165,7 +169,7 @@ def test_data_survives_an_application_restart(client):
     from app.main import app
     from fastapi.testclient import TestClient
 
-    with TestClient(app) as restarted:
+    with TestClient(app, base_url="http://127.0.0.1:8000") as restarted:
         medications = restarted.get("/api/medications?status=all").json()["items"]
         assert [m["id"] for m in medications] == [created["id"]]
         assert len(restarted.get(f"/api/medications/{created['id']}").json()["doses"]) == 29

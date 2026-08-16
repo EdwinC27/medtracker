@@ -255,7 +255,7 @@ def test_a_backup_from_the_previous_version_is_restored_and_brought_forward(
 
     result = backup_service.restore_backup(db, old.name)
 
-    assert result["migrated"] == ["2->3", "3->4", "4->5"]
+    assert result["migrated"] == ["2->3", "3->4", "4->5", "5->6"]
     connection = sqlite3.connect(str(live))
     try:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(medication_doses)")}
