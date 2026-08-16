@@ -86,6 +86,35 @@ def validate_location(raw: str | None) -> str | None:
 # --------------------------------------------------------------------------- #
 # Creating
 # --------------------------------------------------------------------------- #
+def reason_key(exc: BaseException) -> str:
+    """Why a backup failed, as a translation key.
+
+    Decided at the point the real exception is caught, because that is the only
+    place the information still exists: `errno` for the filesystem, SQLite's own
+    wording for a full disk. Everything downstream carries the key, and the
+    technical text goes to the log.
+    """
+    import errno as _errno
+
+    number = getattr(exc, "errno", None)
+    if number in (_errno.ENOSPC, _errno.EDQUOT):
+        return "error.disk_full"
+    if number in (_errno.ENOENT, _errno.ENOTDIR, _errno.ENXIO):
+        return "error.backup_location_unreachable"
+    if number in (_errno.EACCES, _errno.EPERM, _errno.EROFS):
+        return "error.backup_location_unwritable"
+    text = str(exc).lower()
+    if "disk is full" in text or "no space" in text:
+        return "error.disk_full"
+    return "error.backup_failed"
+
+
+def _tagged(error: AppError, key: str) -> AppError:
+    """Carry the reason alongside the error the user's form sees."""
+    error.reason_key = key
+    return error
+
+
 def create_backup(settings, kind: str = MANUAL, source: Path | None = None) -> BackupFile:
     """Take a consistent snapshot of the database. Returns the file written."""
     if kind not in KINDS:
@@ -99,7 +128,14 @@ def create_backup(settings, kind: str = MANUAL, source: Path | None = None) -> B
         directory.mkdir(parents=True, exist_ok=True)
     except OSError as exc:
         logger.error("Backup folder unusable: %s", exc)
-        raise ValidationError({"backup_location": "validation.backup_location_unusable"}) from None
+        # The specific reason is decided here, where the real errno still
+        # exists, and travels with the error as a translation key. By the time
+        # this reaches the System Status card it is a key and nothing else —
+        # never a Windows message in whatever language Windows was installed in.
+        raise _tagged(
+            ValidationError({"backup_location": "validation.backup_location_unusable"}),
+            reason_key(exc),
+        ) from None
 
     stamp = now_local().strftime("%Y%m%d-%H%M%S")
     target = directory / f"{BACKUP_PREFIX}-{kind}-{stamp}.db"
@@ -115,7 +151,7 @@ def create_backup(settings, kind: str = MANUAL, source: Path | None = None) -> B
     except sqlite3.Error as exc:
         logger.error("Backup failed: %s", exc)
         target.unlink(missing_ok=True)
-        raise AppError("error.backup_failed") from None
+        raise _tagged(AppError("error.backup_failed"), reason_key(exc)) from None
     finally:
         connection.close()
 
@@ -230,11 +266,11 @@ def run_scheduled_backup(db: Session, reference: datetime | None = None) -> dict
     settings = get_settings(db)
     if not is_backup_due(settings, reference):
         return None
-    try:
-        backup = create_backup(settings, AUTOMATIC)
-    except AppError as exc:
-        logger.warning("Scheduled backup failed: %s", exc.message_key)
-        return None
+    # A failed automatic backup is raised, not swallowed: the tick records it on
+    # the settings row so System Status can say the copy did not happen.
+    # Returning None here used to make an unplugged backup drive look exactly
+    # like "nothing was due yet".
+    backup = create_backup(settings, AUTOMATIC)
     settings.last_backup_at = reference or now_local()
     removed = prune_backups(settings)
     db.flush()
@@ -288,6 +324,16 @@ def restore_backup(db: Session, name: str) -> dict:
     from app.database.migrations import run_migrations
 
     migrated = run_migrations(DB_PATH)
+
+    # The restored file carries its own lock settings — possibly a different
+    # PIN, possibly none. The unlocked state in memory was granted against
+    # credentials that may no longer exist, so it is given back and the PIN is
+    # asked for again.
+    from app.routes import lock_cache
+    from app.services import applock
+
+    applock.lock()
+    lock_cache.invalidate()
 
     logger.info("Restored %s (safety copy: %s)", chosen.path.name, safety.path.name)
     return {

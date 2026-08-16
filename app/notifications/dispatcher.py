@@ -91,31 +91,105 @@ def run_tick(db: Session, *, send_windows: bool = True, send_email: bool = True)
     }
 
     if settings.medication_reminders:
-        summary["dose_notifications"] = _queue_dose_notifications(db, settings)
-        summary["snooze_notifications"] = _queue_snooze_notifications(db)
+        summary["dose_notifications"] = _guard(
+            db, summary, "dose_notifications", _queue_dose_notifications, db, settings
+        )
+        summary["snooze_notifications"] = _guard(
+            db, summary, "snooze_notifications", _queue_snooze_notifications, db
+        )
 
     # Overdue runs after the offsets so the +15 / +30 reminders of a dose that
     # is about to expire still go out on the same tick.
-    summary["missed_doses"] = _mark_overdue_doses(db, settings)
+    summary["missed_doses"] = _guard(
+        db, summary, "missed_doses", _mark_overdue_doses, db, settings
+    )
 
     if settings.appointment_reminders:
-        summary["appointment_notifications"] = _queue_appointment_notifications(db)
+        summary["appointment_notifications"] = _guard(
+            db, summary, "appointment_notifications", _queue_appointment_notifications, db
+        )
 
     # Commit the queue BEFORE anything is delivered. Sending a toast or an
     # e-mail cannot be undone, so the row that records it must already be
     # durable — otherwise a later failure would roll back the bookkeeping for a
     # message the user has already seen, and the next tick would send it again.
-    db.commit()
+    try:
+        db.commit()
+    except Exception as exc:  # noqa: BLE001
+        db.rollback()
+        summary.setdefault("errors", []).append(f"commit: {exc}")
+        logger.exception("Could not save the notification queue: %s", exc)
 
+    # One channel failing is not the other channels' problem, and neither is
+    # any one dose's: each of these is already internally per-item, and this
+    # guard is what keeps a surprise from ending the whole pass.
     if send_windows and settings.windows_notifications:
-        summary["windows_sent"] = _send_windows_notifications(db, settings)
+        summary["windows_sent"] = _guard(
+            db, summary, "windows_sent", _send_windows_notifications, db, settings
+        )
     if send_email and settings.email_notifications:
-        summary["emails_sent"] = _send_email_notifications(db, settings)
+        summary["emails_sent"] = _guard(
+            db, summary, "emails_sent", _send_email_notifications, db, settings
+        )
 
     summary["backup"] = _run_backup(db)
     _purge_old_notifications(db, settings.notification_history_days)
     db.commit()
     return summary
+
+
+def _guard(db: Session, summary: dict, key: str, func, *args):
+    """Run one stage of the tick; a failure in it is recorded, not propagated.
+
+    The scheduler exists to fire reminders, and a single bad dose, a locked
+    table or a mail server that hangs up must not take the other stages — or
+    the next hour of reminders — with it. What went wrong is logged in full and
+    named in the summary, which is what System Status reports.
+    """
+    try:
+        return func(*args)
+    except Exception as exc:  # noqa: BLE001 - deliberate: this is the boundary
+        try:
+            db.rollback()
+        except Exception:  # noqa: BLE001
+            pass
+        summary.setdefault("errors", []).append(f"{key}: {exc}")
+        logger.exception("scheduler stage %s failed: %s", key, exc)
+        return 0
+
+
+def failure_key(exc: BaseException) -> str:
+    """Turn any exception into something the user can be shown.
+
+    Whatever is recorded here ends up on a card in System Status, and the person
+    reading that card reads Spanish. `str(exc)` would put an English — or,
+    worse, a Windows-locale — sentence like `[WinError 3] El sistema no puede
+    encontrar la ruta` under a Spanish heading, complete with a file path. So a
+    key is what gets stored, and the real text goes to the log where it belongs.
+
+    The order matters. `create_backup` turns an unusable folder into a
+    *validation* error, whose own `message_key` is the useless generic "please
+    review the highlighted fields" — so the reason it attached is asked for
+    first. Only then the error's own key, and only then a guess from `errno`
+    for anything that came from somewhere else entirely.
+    """
+    import errno
+
+    from app.services.errors import AppError
+
+    tagged = getattr(exc, "reason_key", None)
+    if isinstance(tagged, str) and tagged:
+        return tagged
+    if isinstance(exc, AppError):
+        return exc.message_key
+    number = getattr(exc, "errno", None)
+    if number in (errno.ENOSPC, errno.EDQUOT):
+        return "error.disk_full"
+    if number in (errno.EACCES, errno.EPERM, errno.EROFS):
+        return "error.backup_location_unwritable"
+    if number in (errno.ENOENT, errno.ENOTDIR, errno.ENXIO):
+        return "error.backup_location_unreachable"
+    return "error.backup_failed"
 
 
 def _run_backup(db: Session) -> dict | None:
@@ -124,10 +198,26 @@ def _run_backup(db: Session) -> dict | None:
     from app.services.backup import run_scheduled_backup
 
     try:
-        return run_scheduled_backup(db)
+        result = run_scheduled_backup(db)
     except Exception as exc:  # noqa: BLE001 - a failed backup must not stop the tick
-        logger.warning("Scheduled backup failed: %s", exc)
+        logger.warning("Scheduled backup failed: %s", exc, exc_info=True)
+        _record_backup_error(db, failure_key(exc))
         return None
+    if result is not None:
+        _record_backup_error(db, None)
+    return result
+
+
+def _record_backup_error(db: Session, message: str | None) -> None:
+    """Remember the outcome so System Status can report it truthfully."""
+    try:
+        from app.services.settings_service import get_settings
+
+        settings = get_settings(db)
+        settings.last_backup_error = (message or None) and message[:500]
+        db.flush()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Could not record the backup outcome: %s", exc)
 
 
 # --------------------------------------------------------------------------- #
