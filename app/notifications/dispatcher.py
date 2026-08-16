@@ -33,7 +33,7 @@ import json
 import logging
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import and_, delete, func, or_, select, update
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import DOSE_NOTIFICATION_OFFSETS
@@ -55,7 +55,13 @@ from app.services.scheduling import (
     extend_open_ended_schedules,
 )
 from app.services.settings_service import get_settings
-from app.services.textformat import format_datetime, format_dose, format_quantity, format_time
+from app.services.textformat import (
+    format_date,
+    format_datetime,
+    format_dose,
+    format_quantity,
+    format_time,
+)
 from app.utils.timeutil import now_local, parse_datetime
 
 logger = logging.getLogger(__name__)
@@ -77,13 +83,16 @@ def run_tick(db: Session, *, send_windows: bool = True, send_email: bool = True)
         "extended_schedules": extend_open_ended_schedules(db),
         "missed_doses": 0,
         "dose_notifications": 0,
+        "snooze_notifications": 0,
         "appointment_notifications": 0,
+        "backup": None,
         "windows_sent": 0,
         "emails_sent": 0,
     }
 
     if settings.medication_reminders:
         summary["dose_notifications"] = _queue_dose_notifications(db, settings)
+        summary["snooze_notifications"] = _queue_snooze_notifications(db)
 
     # Overdue runs after the offsets so the +15 / +30 reminders of a dose that
     # is about to expire still go out on the same tick.
@@ -103,9 +112,22 @@ def run_tick(db: Session, *, send_windows: bool = True, send_email: bool = True)
     if send_email and settings.email_notifications:
         summary["emails_sent"] = _send_email_notifications(db, settings)
 
-    _purge_old_notifications(db)
+    summary["backup"] = _run_backup(db)
+    _purge_old_notifications(db, settings.notification_history_days)
     db.commit()
     return summary
+
+
+def _run_backup(db: Session) -> dict | None:
+    """Automatic backups live in the same tick as everything else, so there is
+    still exactly one background worker to start and stop."""
+    from app.services.backup import run_scheduled_backup
+
+    try:
+        return run_scheduled_backup(db)
+    except Exception as exc:  # noqa: BLE001 - a failed backup must not stop the tick
+        logger.warning("Scheduled backup failed: %s", exc)
+        return None
 
 
 # --------------------------------------------------------------------------- #
@@ -119,7 +141,31 @@ def enabled_dose_offsets(settings) -> list[tuple[str, int]]:
     ]
 
 
-def _dose_payload(dose: MedicationDose, medication: Medication) -> str:
+def dose_number(db: Session, dose: MedicationDose) -> int:
+    """Which dose of this treatment this is: 1 for the first, 2 for the next...
+
+    Counted over the medication's own schedule, so "Dose #14" means the same
+    thing every time it is written and does not shift when a later dose is
+    added. Ties on the same instant cannot happen (uq_dose_slot), but the id is
+    in the comparison anyway so the answer is total.
+    """
+    return int(
+        db.execute(
+            select(func.count(MedicationDose.id)).where(
+                MedicationDose.medication_id == dose.medication_id,
+                or_(
+                    MedicationDose.scheduled_at < dose.scheduled_at,
+                    and_(
+                        MedicationDose.scheduled_at == dose.scheduled_at,
+                        MedicationDose.id <= dose.id,
+                    ),
+                ),
+            )
+        ).scalar_one()
+    )
+
+
+def _dose_payload(db: Session, dose: MedicationDose, medication: Medication) -> str:
     return json.dumps(
         {
             "dose_id": dose.id,
@@ -130,6 +176,11 @@ def _dose_payload(dose: MedicationDose, medication: Medication) -> str:
             "quantity": medication.quantity,
             "form": medication.form,
             "scheduled_at": dose.scheduled_at.isoformat(),
+            # Written once, when the reminder is queued: the e-mail subject says
+            # "Dose #3" and must keep saying the same thing on every message of
+            # that conversation.
+            "dose_number": dose_number(db, dose),
+            "comments": medication.comments,
         },
         ensure_ascii=False,
     )
@@ -184,6 +235,9 @@ def _queue_dose_notifications(db: Session, settings) -> int:
 
     planned: list[tuple[MedicationDose, str, int, object]] = []
     for dose in candidates:
+        if dose.snoozed_until and dose.snoozed_until > now:
+            # Explicitly asked to be left alone until then.
+            continue
         for kind, minutes in offsets:
             fire_at = dose.scheduled_at + timedelta(minutes=minutes)
             if fire_at <= now:
@@ -207,7 +261,7 @@ def _queue_dose_notifications(db: Session, settings) -> int:
                 fire_at=fire_at,
                 title_key="notification.medication_title",
                 body_key="notification.dose_body",
-                payload=_dose_payload(dose, dose.medication),
+                payload=_dose_payload(db, dose, dose.medication),
                 # Recorded as already handled on every channel: the event is
                 # kept for the audit trail but nothing is delivered.
                 windows_sent_at=now if stale else None,
@@ -216,6 +270,70 @@ def _queue_dose_notifications(db: Session, settings) -> int:
             )
         )
         dose.notified_at = now
+        if not stale:
+            created += 1
+    db.flush()
+    return created
+
+
+def _queue_snooze_notifications(db: Session) -> int:
+    """One reminder per elapsed snooze.
+
+    The key carries the snooze instant, so pressing "remind me in 10 minutes"
+    twice produces two distinct reminders rather than being swallowed by the
+    dedupe index.
+    """
+    now = now_local()
+    horizon = now - timedelta(minutes=CATCH_UP_WINDOW_MINUTES)
+
+    due = (
+        db.execute(
+            select(MedicationDose)
+            .options(selectinload(MedicationDose.medication))
+            .join(Medication)
+            .where(
+                MedicationDose.status == DoseStatus.SCHEDULED.value,
+                MedicationDose.snoozed_until.is_not(None),
+                MedicationDose.snoozed_until <= now,
+                Medication.status == MedicationStatus.ACTIVE.value,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not due:
+        return 0
+
+    def key_for(dose):
+        return f"dose:{dose.id}:snooze:{dose.snoozed_until:%Y%m%d%H%M}"
+
+    known = _existing_keys(db, [key_for(dose) for dose in due])
+
+    created = 0
+    for dose in due:
+        key = key_for(dose)
+        fire_at = dose.snoozed_until
+        # The snooze is spent either way; the dose goes back to the normal rules.
+        dose.snoozed_until = None
+        if key in known:
+            continue
+        known.add(key)
+        stale = fire_at < horizon
+        db.add(
+            Notification(
+                type=NotificationType.DOSE.value,
+                kind=DoseNotificationKind.SNOOZE.value,
+                dedupe_key=key,
+                reference_id=dose.id,
+                fire_at=fire_at,
+                title_key="notification.medication_title",
+                body_key="notification.dose_body",
+                payload=_dose_payload(db, dose, dose.medication),
+                windows_sent_at=now if stale else None,
+                browser_delivered_at=now if stale else None,
+                email_sent_at=now if stale else None,
+            )
+        )
         if not stale:
             created += 1
     db.flush()
@@ -242,6 +360,14 @@ def _mark_overdue_doses(db: Session, settings) -> int:
                 # "<=" so a dose is overdue exactly when the grace period has
                 # elapsed, not a minute later.
                 MedicationDose.scheduled_at <= cutoff,
+                # A snooze the user asked for still has to be honoured. While it
+                # is running the dose stays pending, so the reminder it promised
+                # can still fire; it turns "missed" on the first tick after the
+                # snooze has been spent.
+                or_(
+                    MedicationDose.snoozed_until.is_(None),
+                    MedicationDose.snoozed_until <= now,
+                ),
             )
         )
         .scalars()
@@ -255,6 +381,9 @@ def _mark_overdue_doses(db: Session, settings) -> int:
     for dose in stale:
         dose.status = DoseStatus.MISSED.value
         dose.status_changed_at = now
+        # A spent snooze on a missed dose would otherwise keep showing
+        # "snoozed until ..." on a row that is no longer pending.
+        dose.snoozed_until = None
 
         if not settings.dose_overdue or not settings.medication_reminders:
             continue
@@ -276,7 +405,7 @@ def _mark_overdue_doses(db: Session, settings) -> int:
                 fire_at=fire_at,
                 title_key="notification.medication_title",
                 body_key="notification.dose_body",
-                payload=_dose_payload(dose, medication),
+                payload=_dose_payload(db, dose, medication),
                 windows_sent_at=now if was_stale else None,
                 browser_delivered_at=now if was_stale else None,
                 email_sent_at=now if was_stale else None,
@@ -375,6 +504,8 @@ def _dose_lead(kind: str, language: str) -> str:
     minutes = _OFFSET_MINUTES.get(kind)
     if kind == DoseNotificationKind.OVERDUE.value:
         return t("notification.dose_lead_overdue", language)
+    if kind == DoseNotificationKind.SNOOZE.value:
+        return t("notification.dose_lead_snooze", language)
     if minutes is None or minutes == 0:
         return t("notification.dose_lead_at", language)
     if minutes < 0:
@@ -428,33 +559,64 @@ def render_notification(notification: Notification, language: str) -> dict:
     }
 
 
+# One row per moment of a dose: the subject, the heading, the opening line, the
+# status word, how long ago it was due, and the sentence that closes it. Keeping
+# them in a table rather than a chain of ifs means the seven e-mails of a dose
+# are obviously variations of one message, and adding an eighth is one line.
+_DOSE_EMAIL = {
+    DoseNotificationKind.BEFORE_30.value: {
+        "subject": "email.subject_before_30", "heading": "email.heading_reminder",
+        "intro": "email.intro_before", "status": "email.status_upcoming",
+        "closing": "email.closing_first",
+    },
+    DoseNotificationKind.BEFORE_15.value: {
+        "subject": "email.subject_before_15", "heading": "email.heading_reminder",
+        "intro": "email.intro_before", "status": "email.status_upcoming",
+        "closing": "email.closing_second",
+    },
+    DoseNotificationKind.BEFORE_5.value: {
+        "subject": "email.subject_before_5", "heading": "email.heading_reminder",
+        "intro": "email.intro_before", "status": "email.status_upcoming",
+    },
+    DoseNotificationKind.AT_TIME.value: {
+        "subject": "email.subject_at_time", "heading": "email.heading_time",
+        "intro": "email.intro_at_time", "status": "email.status_pending",
+        "closing": "email.closing_mark",
+    },
+    DoseNotificationKind.SNOOZE.value: {
+        "subject": "email.subject_snooze", "heading": "email.heading_time",
+        "intro": "email.intro_snooze", "status": "email.status_pending",
+        "closing": "email.closing_mark",
+    },
+    DoseNotificationKind.AFTER_15.value: {
+        "subject": "email.subject_after_15", "heading": "email.heading_pending",
+        "intro": "email.intro_pending", "status": "email.status_pending",
+        "elapsed": 15, "closing": "email.closing_update",
+    },
+    DoseNotificationKind.AFTER_30.value: {
+        "subject": "email.subject_after_30", "heading": "email.heading_pending",
+        "intro": "email.intro_pending", "status": "email.status_pending",
+        "elapsed": 30, "closing": "email.closing_update",
+    },
+    DoseNotificationKind.OVERDUE.value: {
+        "subject": "email.subject_overdue", "heading": "email.heading_overdue",
+        "intro": "email.intro_overdue", "status": "email.status_overdue",
+        "elapsed": "from_schedule", "closing": "email.closing_review",
+    },
+}
+
+
 def render_email(notification: Notification, language: str) -> tuple[str, str]:
-    """Long form, for e-mail: `(subject, body)`, fully translated."""
+    """Long form, for e-mail: `(subject, body)`, fully translated.
+
+    Every string comes from the catalogs and every date and time goes through
+    the same formatter the screens use, so an e-mail reads the way the rest of
+    the application does in whichever language it is set to.
+    """
     payload = json.loads(notification.payload) if notification.payload else {}
 
     if notification.type == NotificationType.DOSE.value:
-        scheduled = parse_datetime(payload.get("scheduled_at"))
-        name = payload.get("name", "")
-        subject = t("email.dose_subject", language, name=name)
-        lines = [
-            t("notification.medication_title", language),
-            "",
-            _dose_lead(notification.kind or "at_time", language),
-            "",
-            name,
-        ]
-        details = _dose_summary(payload, language)
-        if details:
-            lines += ["", f"{t('medication.dose', language)}:", details]
-        if scheduled:
-            lines += [
-                "",
-                f"{t('notification.scheduled_time', language)}:",
-                format_time(scheduled, language),
-                format_datetime(scheduled, language),
-            ]
-        lines += ["", "--", t("app.disclaimer_short", language)]
-        return subject, "\n".join(lines)
+        return _render_dose_email(notification, payload, language)
 
     when = parse_datetime(payload.get("scheduled_at"))
     doctor = payload.get("doctor", "")
@@ -469,6 +631,85 @@ def render_email(notification: Notification, language: str) -> tuple[str, str]:
         lines += ["", f"{t('appointment.location', language)}:", payload["location"]]
     if payload.get("treatment"):
         lines += ["", f"{t('appointment.treatment', language)}:", payload["treatment"]]
+    lines += ["", "--", t("app.disclaimer_short", language)]
+    return subject, "\n".join(lines)
+
+
+def _elapsed_label(fired_at, scheduled, language: str) -> str:
+    """"45 minutes" / "2 hours 30 minutes", from the two instants themselves."""
+    if scheduled is None or fired_at is None:
+        return t("email.elapsed_over_2h", language)
+    minutes = max(int((fired_at - scheduled).total_seconds() // 60), 0)
+    if minutes < 60:
+        return t("email.elapsed_minutes", language, minutes=minutes)
+    hours, rest = divmod(minutes, 60)
+    if rest == 0:
+        return t("email.elapsed_hours", language, hours=hours)
+    return t("email.elapsed_hours_minutes", language, hours=hours, minutes=rest)
+
+
+def _render_dose_email(
+    notification: Notification, payload: dict, language: str
+) -> tuple[str, str]:
+    kind = notification.kind or DoseNotificationKind.AT_TIME.value
+    spec = _DOSE_EMAIL.get(kind, _DOSE_EMAIL[DoseNotificationKind.AT_TIME.value])
+
+    name = payload.get("name", "")
+    number = payload.get("dose_number") or 1
+    scheduled = parse_datetime(payload.get("scheduled_at"))
+    clock = format_time(scheduled, language) if scheduled else ""
+
+    subject = t(spec["subject"], language, name=name, number=number)
+
+    # The opening line. "In 30 minutes you have a dose of:" is followed by the
+    # name on its own line; the pending/overdue ones are a whole sentence and
+    # stand alone.
+    minutes = _OFFSET_MINUTES.get(kind)
+    if spec["intro"] == "email.intro_before":
+        intro = t(spec["intro"], language, minutes=abs(minutes or 0))
+    elif spec["intro"] in ("email.intro_pending", "email.intro_overdue"):
+        intro = t(spec["intro"], language, name=name, time=clock)
+    else:
+        intro = t(spec["intro"], language)
+
+    lines = [t(spec["heading"], language), "", intro]
+    if spec["intro"] in ("email.intro_before", "email.intro_at_time", "email.intro_snooze"):
+        lines += ["", name]
+
+    details = _dose_summary(payload, language)
+    if details:
+        lines += ["", f"{t('email.label_dose', language)}:", details]
+    if scheduled:
+        lines += [
+            "", f"{t('email.label_scheduled_time', language)}:", clock,
+            "", f"{t('email.label_date', language)}:", format_date(scheduled, language),
+        ]
+
+    elapsed = spec.get("elapsed")
+    if elapsed == "from_schedule":
+        # The overdue moment is the `missed_after_minutes` setting, which the
+        # user can put anywhere from 5 minutes to a day. Read the real gap off
+        # the row instead of asserting "more than 2 hours" at 5 minutes past.
+        lines += [
+            "",
+            f"{t('email.label_elapsed', language)}:",
+            _elapsed_label(notification.fire_at, scheduled, language),
+        ]
+    elif elapsed:
+        lines += ["", f"{t('email.label_elapsed', language)}:",
+                  t("email.elapsed_minutes", language, minutes=elapsed)]
+
+    lines += ["", f"{t('email.label_status', language)}:", t(spec["status"], language)]
+
+    # The user's own note about the medication, if there is one. Short by
+    # design: this is a reminder, not a medical report.
+    comments = (payload.get("comments") or "").strip()
+    if comments:
+        lines += ["", f"{t('email.label_notes', language)}:", comments[:200]]
+
+    if spec.get("closing"):
+        lines += ["", t(spec["closing"], language)]
+
     lines += ["", "--", t("app.disclaimer_short", language)]
     return subject, "\n".join(lines)
 
@@ -541,6 +782,118 @@ def _send_windows_notifications(db: Session, settings) -> int:
     return sent
 
 
+def new_message_id_for(config, token: str) -> str:
+    """Re-exported so callers do not have to reach into the e-mail module."""
+    from app.notifications.email import new_message_id
+
+    return new_message_id(config, token)
+
+
+def dose_email_thread(db: Session, notification: Notification, config) -> "EmailThread":
+    """Where this reminder sits in its dose's conversation.
+
+    One thread per *dose*: every reminder for dose 412 quotes the ones sent
+    before it, and dose 413 of the same medication starts a conversation of its
+    own. The first reminder actually e-mailed for a dose opens the thread — not
+    necessarily the -30 minute one, since that offset can be switched off, or
+    the app can have been closed when it was due.
+    """
+    from app.notifications.email import EmailThread, new_message_id
+
+    references: list[str] = []
+    if notification.type == NotificationType.DOSE.value and notification.reference_id:
+        # Belt and braces: the dose id identifies the conversation, and the
+        # scheduled time confirms it. If an id were ever recycled, the times
+        # would not match and the new dose would correctly start fresh.
+        mine = json.loads(notification.payload) if notification.payload else {}
+        slot = mine.get("scheduled_at")
+
+        rows = db.execute(
+            select(Notification.email_message_id, Notification.payload)
+            .where(
+                Notification.type == NotificationType.DOSE.value,
+                Notification.reference_id == notification.reference_id,
+                Notification.email_message_id.is_not(None),
+                Notification.id != notification.id,
+            )
+            .order_by(Notification.fire_at, Notification.id)
+        ).all()
+        for value, payload in rows:
+            if not value:
+                continue
+            other = json.loads(payload) if payload else {}
+            if slot and other.get("scheduled_at") and other["scheduled_at"] != slot:
+                continue
+            references.append(value)
+
+    token = f"dose{notification.reference_id}-n{notification.id}"
+    return EmailThread(message_id=new_message_id(config, token), references=references)
+
+
+# The states that mean "the user has dealt with this dose". Note that `missed`
+# is not one of them: the overdue e-mail is *about* a dose that ran out of time,
+# and the sweep that sets it runs earlier in the same tick.
+_RESOLVED_BY_USER = frozenset(
+    {
+        DoseStatus.TAKEN.value,
+        DoseStatus.SKIPPED.value,
+        DoseStatus.BEFORE_REGISTRATION.value,
+    }
+)
+
+
+def _dose_still_wants_email(db: Session, notification: Notification) -> bool:
+    """Ask the dose, now, instead of trusting the queue.
+
+    A reminder is queued minutes before it is sent, and in between the user may
+    have marked the dose. Cancellation already withdraws the queued rows, but
+    this is the check that closes the race for good: the state at the moment of
+    sending is the one that decides.
+    """
+    if notification.type != NotificationType.DOSE.value or not notification.reference_id:
+        return True
+    dose = db.get(MedicationDose, notification.reference_id)
+    if dose is None:
+        return False
+    return dose.status not in _RESOLVED_BY_USER
+
+
+def _claim_for_email(db: Session, notification: Notification, thread) -> bool:
+    """Take ownership of this row for sending. False if someone else already had it."""
+    result = db.execute(
+        update(Notification)
+        .where(Notification.id == notification.id, Notification.email_sent_at.is_(None))
+        .values(
+            email_sent_at=now_local(),
+            email_message_id=thread.message_id if thread is not None else None,
+        )
+    )
+    db.commit()
+    if not result.rowcount:
+        return False
+    db.refresh(notification)
+    return True
+
+
+def _backfill_dose_number(db: Session, notification: Notification) -> None:
+    """Give an old queued reminder the dose number its payload predates.
+
+    A row queued by a version before this feature has no `dose_number`, and
+    defaulting it to 1 would put the wrong ordinal in the subject — in the same
+    conversation as the correctly numbered messages around it.
+    """
+    if notification.type != NotificationType.DOSE.value or not notification.payload:
+        return
+    payload = json.loads(notification.payload)
+    if payload.get("dose_number") or not notification.reference_id:
+        return
+    dose = db.get(MedicationDose, notification.reference_id)
+    if dose is None:
+        return
+    payload["dose_number"] = dose_number(db, dose)
+    notification.payload = json.dumps(payload, ensure_ascii=False)
+
+
 def _send_email_notifications(db: Session, settings) -> int:
     from app.notifications.email import config_from_settings, send_email
 
@@ -554,17 +907,32 @@ def _send_email_notifications(db: Session, settings) -> int:
     sent = 0
     for notification in _pending(db, Notification.email_sent_at, limit=10):
         stale = notification.fire_at < horizon
-        rendered = None if stale else render_email(notification, language)
+        # Taken or skipped in the meantime? Then this message has nothing left
+        # to say. It is recorded as handled so it never comes back.
+        resolved = not stale and not _dose_still_wants_email(db, notification)
+        skip = stale or resolved
 
-        notification.email_sent_at = now_local()
-        db.commit()
-        if stale:
+        if not skip:
+            _backfill_dose_number(db, notification)
+        rendered = None if skip else render_email(notification, language)
+        thread = None if skip else dose_email_thread(db, notification, config)
+
+        # Claim it first and commit, so a crash mid-send can only ever lose a
+        # message - never repeat one the user already received. The claim is a
+        # conditional UPDATE rather than an attribute assignment: the scheduler
+        # thread and a manual "run now" from the browser can be in this loop at
+        # the same time, and only one of them may send.
+        if not _claim_for_email(db, notification, thread):
+            continue
+        if skip:
             continue
 
-        ok, error = send_email(config, rendered[0], rendered[1])
+        ok, error = send_email(config, rendered[0], rendered[1], thread)
         if ok:
             sent += 1
         else:
+            # The Message-ID stays on the row even when the send failed: the
+            # next reminder of this dose would otherwise open a second thread.
             notification.error = error
             db.commit()
             logger.warning("E-mail notification failed: %s", error)
@@ -587,6 +955,39 @@ def pending_for_browser(db: Session, language: str) -> list[dict]:
         .all()
     )
     return [render_notification(row, language) for row in rows]
+
+
+def purge_dose_notifications(db: Session, dose_ids: list[int]) -> int:
+    """Delete the notifications of doses whose rows are about to disappear.
+
+    Cancelling is not enough here. SQLite hands out `INTEGER PRIMARY KEY` values
+    as `max(rowid) + 1`, so a deleted dose's id is handed to the next dose
+    created — and a notification row still pointing at that number would then
+    belong to a completely different treatment. Two things would follow: its
+    `dedupe_key` (`dose:1:before_30`) would suppress the new dose's reminders on
+    every channel, and its `Message-ID` would drag the new dose into the deleted
+    one's e-mail conversation.
+
+    So when the dose row itself goes, its notifications go with it. This is only
+    ever called for doses being deleted; a dose that was taken, skipped or
+    missed keeps its history and is merely cancelled.
+    """
+    if not dose_ids:
+        return 0
+    removed = 0
+    for start in range(0, len(dose_ids), 400):
+        chunk = dose_ids[start : start + 400]
+        result = db.execute(
+            delete(Notification).where(
+                Notification.type == NotificationType.DOSE.value,
+                Notification.reference_id.in_(chunk),
+            )
+        )
+        removed += result.rowcount or 0
+    if removed:
+        db.flush()
+        logger.info("Removed %s notification(s) of deleted doses", removed)
+    return removed
 
 
 def cancel_pending_dose_notifications(db: Session, dose_ids: list[int]) -> int:
@@ -633,9 +1034,74 @@ def mark_browser_delivered(db: Session, ids: list[int]) -> int:
     return len(rows)
 
 
-def _purge_old_notifications(db: Session, keep_days: int = 30) -> int:
-    """Keep the notification queue from growing forever."""
-    cutoff = now_local() - timedelta(days=keep_days)
+# --------------------------------------------------------------------------- #
+# Notification centre (v3)
+# --------------------------------------------------------------------------- #
+def notification_history(
+    db: Session, language: str, unread_only: bool = False, limit: int = 50, offset: int = 0
+) -> dict:
+    """What the bell icon shows: the app's own record, independent of whether
+    Windows, the browser or e-mail managed to deliver anything."""
+    stmt = select(Notification)
+    if unread_only:
+        stmt = stmt.where(Notification.read_at.is_(None))
+    rows = (
+        db.execute(stmt.order_by(Notification.fire_at.desc()).offset(offset).limit(limit))
+        .scalars()
+        .all()
+    )
+    items = []
+    for row in rows:
+        rendered = render_notification(row, language)
+        rendered["read"] = row.read_at is not None
+        rendered["read_at"] = row.read_at.isoformat() if row.read_at else None
+        # Delivery is reported per channel and only when it is actually known.
+        rendered["delivery"] = {
+            "windows": row.windows_sent_at.isoformat() if row.windows_sent_at else None,
+            "browser": row.browser_delivered_at.isoformat() if row.browser_delivered_at else None,
+            "email": row.email_sent_at.isoformat() if row.email_sent_at else None,
+            "error": row.error,
+        }
+        items.append(rendered)
+
+    return {
+        "items": items,
+        "unread": unread_count(db),
+        "total": db.query(Notification).count(),
+        "offset": offset,
+        "limit": limit,
+    }
+
+
+def unread_count(db: Session) -> int:
+    return int(
+        db.execute(
+            select(func.count(Notification.id)).where(Notification.read_at.is_(None))
+        ).scalar_one()
+    )
+
+
+def mark_read(db: Session, ids: list[int] | None = None) -> int:
+    """Mark the given notifications read, or every unread one when ids is None."""
+    now = now_local()
+    stmt = select(Notification).where(Notification.read_at.is_(None))
+    if ids:
+        stmt = stmt.where(Notification.id.in_(ids))
+    rows = db.execute(stmt).scalars().all()
+    for row in rows:
+        row.read_at = now
+    if rows:
+        db.flush()
+    return len(rows)
+
+
+def _purge_old_notifications(db: Session, keep_days: int = 90) -> int:
+    """Keep the notification history from growing forever.
+
+    The window is a setting because the notification centre reads this table:
+    shortening it shortens the history the user can scroll back through.
+    """
+    cutoff = now_local() - timedelta(days=max(int(keep_days or 90), 1))
     old = db.execute(select(Notification).where(Notification.fire_at < cutoff)).scalars().all()
     for row in old:
         db.delete(row)
