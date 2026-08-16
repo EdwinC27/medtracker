@@ -7,7 +7,12 @@ from datetime import time
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.config import APP_VERSION, DB_PATH, FREQUENCY_OPTIONS
+from app.config import (
+    APP_VERSION,
+    DB_PATH,
+    DOSE_NOTIFICATION_OFFSETS,
+    FREQUENCY_OPTIONS,
+)
 from app.i18n import available_languages, normalize_language
 from app.models.models import Medication, MedicationStatus, Settings
 from app.services.errors import ValidationError
@@ -30,24 +35,54 @@ def get_settings(db: Session) -> Settings:
     return ensure_settings(db)
 
 
+BOOLEAN_SETTINGS = (
+    "windows_notifications",
+    "browser_notifications",
+    "email_notifications",
+    "medication_reminders",
+    "appointment_reminders",
+    "appt_reminder_days_3",
+    "appt_reminder_day_1",
+    "appt_reminder_hours_3",
+    "dose_before_30",
+    "dose_before_15",
+    "dose_before_5",
+    "dose_at_time",
+    "dose_after_15",
+    "dose_after_30",
+    "dose_overdue",
+)
+
+
 def settings_to_dict(settings: Settings) -> dict:
-    return {
+    from app.utils.secretstore import describe_backend
+
+    data = {
         "language": settings.language,
         "default_first_dose_time": settings.default_first_dose_time.strftime("%H:%M"),
         "ending_soon_days": settings.ending_soon_days,
         "missed_after_minutes": settings.missed_after_minutes,
-        "windows_notifications": settings.windows_notifications,
-        "browser_notifications": settings.browser_notifications,
-        "medication_reminders": settings.medication_reminders,
-        "appointment_reminders": settings.appointment_reminders,
-        "appt_reminder_days_3": settings.appt_reminder_days_3,
-        "appt_reminder_day_1": settings.appt_reminder_day_1,
-        "appt_reminder_hours_3": settings.appt_reminder_hours_3,
+        # --- e-mail ---
+        "email_recipient": settings.email_recipient,
+        "email_sender": settings.email_sender,
+        "smtp_host": settings.smtp_host,
+        "smtp_port": settings.smtp_port,
+        "smtp_username": settings.smtp_username,
+        # The password itself is never sent to the browser; only whether one is
+        # stored, and how it is protected on this machine.
+        "smtp_password_set": bool(settings.smtp_password_protected),
+        "smtp_security": settings.smtp_security,
+        "secret_backend": describe_backend(),
+        # --- reference data for the forms ---
         "available_languages": available_languages(),
         "frequency_options": list(FREQUENCY_OPTIONS),
+        "dose_offsets": [kind for kind, _minutes in DOSE_NOTIFICATION_OFFSETS],
         "database_path": str(DB_PATH),
         "version": APP_VERSION,
     }
+    for key in BOOLEAN_SETTINGS:
+        data[key] = bool(getattr(settings, key))
+    return data
 
 
 def active_language(db: Session, browser_language: str | None) -> str:
@@ -122,17 +157,11 @@ def update_settings(db: Session, data: dict) -> tuple[Settings, int]:
     if fields:
         raise ValidationError(fields)
 
-    for key in (
-        "windows_notifications",
-        "browser_notifications",
-        "medication_reminders",
-        "appointment_reminders",
-        "appt_reminder_days_3",
-        "appt_reminder_day_1",
-        "appt_reminder_hours_3",
-    ):
+    for key in BOOLEAN_SETTINGS:
         if key in data:
             setattr(settings, key, _as_bool(data.get(key), getattr(settings, key)))
+
+    _apply_email_settings(settings, data)
 
     if new_first_dose is not None and new_first_dose != settings.default_first_dose_time:
         settings.default_first_dose_time = new_first_dose
@@ -143,6 +172,73 @@ def update_settings(db: Session, data: dict) -> tuple[Settings, int]:
     settings.updated_at = now_local()
     db.flush()
     return settings, recalculated
+
+
+def _apply_email_settings(settings: Settings, data: dict) -> None:
+    """Store the SMTP configuration; the password goes through the secret store.
+
+    Three cases for the password field:
+      * absent from the payload  -> leave whatever is stored alone
+      * empty string             -> forget the stored password
+      * any other value          -> encrypt and replace it
+    """
+    from app.utils.secretstore import clear as clear_secret
+    from app.utils.secretstore import protect
+
+    fields: dict[str, str] = {}
+
+    if "email_recipient" in data:
+        value = (data.get("email_recipient") or "").strip()
+        if value and not _looks_like_email(value):
+            fields["email_recipient"] = "validation.email_invalid"
+        settings.email_recipient = value or None
+
+    if "email_sender" in data:
+        value = (data.get("email_sender") or "").strip()
+        if value and not _looks_like_email(value):
+            fields["email_sender"] = "validation.email_invalid"
+        settings.email_sender = value or None
+
+    if "smtp_host" in data:
+        settings.smtp_host = (data.get("smtp_host") or "").strip()[:200] or None
+
+    if "smtp_port" in data:
+        try:
+            port = int(data.get("smtp_port") or 587)
+            if not 1 <= port <= 65535:
+                raise ValueError
+            settings.smtp_port = port
+        except (TypeError, ValueError):
+            fields["smtp_port"] = "validation.port_invalid"
+
+    if "smtp_username" in data:
+        settings.smtp_username = (data.get("smtp_username") or "").strip()[:320] or None
+
+    if "smtp_security" in data:
+        value = (data.get("smtp_security") or "starttls").strip().lower()
+        settings.smtp_security = value if value in {"starttls", "ssl", "none"} else "starttls"
+
+    # Turning the channel on without somewhere to send to is a configuration
+    # mistake worth catching at save time rather than at 3 a.m.
+    if settings.email_notifications and not (settings.smtp_host and settings.email_recipient):
+        fields["email_notifications"] = "validation.email_incomplete"
+
+    # Every check has to pass BEFORE the password is written: `protect()` may
+    # touch the filesystem, and a rejected save must not leave a secret behind.
+    if fields:
+        raise ValidationError(fields)
+
+    if "smtp_password" in data:
+        password = data.get("smtp_password")
+        if password is None or password == "":
+            settings.smtp_password_protected = None
+            clear_secret()
+        else:
+            settings.smtp_password_protected = protect(str(password))
+
+
+def _looks_like_email(value: str) -> bool:
+    return "@" in value and "." in value.split("@")[-1] and len(value) <= 320
 
 
 def _realign_active_medications(db: Session, new_time: time) -> int:
