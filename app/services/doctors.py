@@ -44,7 +44,8 @@ def _validate(data: dict) -> dict:
     fields: dict[str, str] = {}
     clean: dict = {}
 
-    name = (data.get("name") or "").strip()
+    # Collapsed rather than merely stripped: the name reaches e-mail subjects.
+    name = " ".join((data.get("name") or "").split())
     if not name:
         fields["name"] = "validation.doctor_name_required"
     clean["name"] = name[:160]

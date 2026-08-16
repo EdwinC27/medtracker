@@ -9,9 +9,13 @@ from sqlalchemy.orm import Session
 
 from app.config import (
     APP_VERSION,
+    BACKUP_FREQUENCIES,
+    BACKUP_KEEP_OPTIONS,
     DB_PATH,
     DOSE_NOTIFICATION_OFFSETS,
     FREQUENCY_OPTIONS,
+    SNOOZE_OPTIONS,
+    THEME_OPTIONS,
 )
 from app.i18n import available_languages, normalize_language
 from app.models.models import Medication, MedicationStatus, Settings
@@ -51,6 +55,7 @@ BOOLEAN_SETTINGS = (
     "dose_after_15",
     "dose_after_30",
     "dose_overdue",
+    "backup_enabled",
 )
 
 
@@ -73,10 +78,23 @@ def settings_to_dict(settings: Settings) -> dict:
         "smtp_password_set": bool(settings.smtp_password_protected),
         "smtp_security": settings.smtp_security,
         "secret_backend": describe_backend(),
+        # --- appearance & history (v3) ---
+        "theme": settings.theme,
+        "notification_history_days": settings.notification_history_days,
+        # --- backups (v3) ---
+        "backup_frequency": settings.backup_frequency,
+        "backup_time": settings.backup_time.strftime("%H:%M"),
+        "backup_keep": settings.backup_keep,
+        "backup_location": settings.backup_location,
+        "last_backup_at": settings.last_backup_at.isoformat() if settings.last_backup_at else None,
         # --- reference data for the forms ---
         "available_languages": available_languages(),
         "frequency_options": list(FREQUENCY_OPTIONS),
         "dose_offsets": [kind for kind, _minutes in DOSE_NOTIFICATION_OFFSETS],
+        "snooze_options": list(SNOOZE_OPTIONS),
+        "theme_options": list(THEME_OPTIONS),
+        "backup_frequencies": list(BACKUP_FREQUENCIES),
+        "backup_keep_options": list(BACKUP_KEEP_OPTIONS),
         "database_path": str(DB_PATH),
         "version": APP_VERSION,
     }
@@ -153,6 +171,56 @@ def update_settings(db: Session, data: dict) -> tuple[Settings, int]:
             settings.missed_after_minutes = minutes
         except (TypeError, ValueError):
             fields["missed_after_minutes"] = "validation.missed_range"
+
+    if "theme" in data:
+        value = (data.get("theme") or "system").strip().lower()
+        if value not in THEME_OPTIONS:
+            fields["theme"] = "validation.theme_invalid"
+        else:
+            settings.theme = value
+
+    if "notification_history_days" in data:
+        try:
+            days = int(data.get("notification_history_days"))
+            if not 7 <= days <= 3650:
+                raise ValueError
+            settings.notification_history_days = days
+        except (TypeError, ValueError):
+            fields["notification_history_days"] = "validation.history_range"
+
+    if "backup_frequency" in data:
+        value = (data.get("backup_frequency") or "daily").strip().lower()
+        if value not in BACKUP_FREQUENCIES:
+            fields["backup_frequency"] = "validation.backup_frequency_invalid"
+        else:
+            settings.backup_frequency = value
+
+    if "backup_time" in data:
+        try:
+            parsed = parse_time(data.get("backup_time"))
+        except (TypeError, ValueError):
+            parsed = None
+        if parsed is None:
+            fields["backup_time"] = "validation.time_invalid"
+        else:
+            settings.backup_time = parsed
+
+    if "backup_keep" in data:
+        try:
+            keep = int(data.get("backup_keep"))
+            if not 1 <= keep <= 365:
+                raise ValueError
+            settings.backup_keep = keep
+        except (TypeError, ValueError):
+            fields["backup_keep"] = "validation.backup_keep_range"
+
+    if "backup_location" in data and not fields:
+        from app.services.backup import validate_location
+
+        try:
+            settings.backup_location = validate_location(data.get("backup_location"))
+        except ValidationError as exc:
+            fields.update(exc.fields)
 
     if fields:
         raise ValidationError(fields)
