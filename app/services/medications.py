@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import (
+    DOSE_NOTIFICATION_OFFSETS,
     FORM_OPTIONS,
     FREQUENCY_OPTIONS,
     MAX_TREATMENT_DAYS,
+    SNOOZE_OPTIONS,
     UNIT_OPTIONS,
 )
 from app.models.models import (
@@ -25,6 +27,7 @@ from app.services.scheduling import (
     clear_upcoming_doses,
     next_dose_for,
     rebuild_doses,
+    registered_at,
     requires_complete_confirmation,
     taken_confirmation_threshold,
 )
@@ -32,6 +35,10 @@ from app.services.settings_service import get_settings
 from app.utils.timeutil import iso, now_local, parse_date, parse_time
 
 SCHEDULE_FIELDS = ("start_date", "end_date", "frequency_hours", "first_dose_time")
+
+# How far ahead of a dose its first reminder appears, and therefore the earliest
+# moment at which there is anything to snooze.
+EARLIEST_DOSE_REMINDER_MINUTES = -min(minutes for _kind, minutes in DOSE_NOTIFICATION_OFFSETS)
 
 
 # --------------------------------------------------------------------------- #
@@ -67,7 +74,10 @@ def _validate(data: dict, current: Medication | None = None) -> dict:
     fields: dict[str, str] = {}
     clean: dict = {}
 
-    name = (data.get("name") or "").strip()
+    # Collapse any interior whitespace, line breaks included: the name travels
+    # into e-mail subjects and Windows toasts, where a line break is either
+    # rejected or is an injection vector.
+    name = " ".join((data.get("name") or "").split())
     if not name:
         fields["name"] = "validation.name_required"
     clean["name"] = name[:160]
@@ -187,6 +197,11 @@ def create_medication(db: Session, data: dict) -> Medication:
         frequency_hours=clean["frequency_hours"],
         first_dose_time=clean["first_dose_time"],
         status=MedicationStatus.ACTIVE.value,
+        # Set explicitly rather than left to the column default: this instant is
+        # domain data, not bookkeeping. It is what separates the doses the
+        # application could remind about from the ones that had already passed
+        # when the treatment was written down.
+        created_at=now_local(),
     )
     db.add(medication)
     db.flush()
@@ -260,7 +275,10 @@ def delete_medication(db: Session, medication_id: int) -> None:
     """Hard delete. Doses cascade; appointments themselves are kept."""
     medication = get_medication(db, medication_id)
     image_path = medication.image_path
-    _cancel_notifications(db, [dose.id for dose in medication.doses])
+    # The dose rows are about to be deleted and SQLite recycles their ids, so
+    # their notifications have to go too - otherwise the next medication would
+    # inherit their dedupe keys and their e-mail conversation.
+    _purge_notifications(db, [dose.id for dose in medication.doses])
     medication.appointments.clear()
     db.delete(medication)
     db.flush()
@@ -343,10 +361,26 @@ def set_dose_status(db: Session, dose_id: int, status: str) -> MedicationDose:
     if dose is None:
         raise NotFoundError()
     now = now_local()
+
+    # A dose that predates its medication's registration can be recorded as
+    # taken or skipped — it is the user's own history to write down — but it can
+    # never go back to "scheduled" or forward to "missed". Either would hand it
+    # to the overdue sweep or brand it a failure, which is exactly what this
+    # status exists to prevent.
+    if (
+        status in (DoseStatus.SCHEDULED.value, DoseStatus.MISSED.value)
+        and dose.scheduled_at < registered_at(dose.medication)
+    ):
+        status = DoseStatus.BEFORE_REGISTRATION.value
+
     dose.status = status
     # `marked_at` records a human decision; `status_changed_at` records any
     # change, including the automatic one to "missed".
-    dose.marked_at = None if status == DoseStatus.SCHEDULED.value else now
+    dose.marked_at = (
+        None
+        if status in (DoseStatus.SCHEDULED.value, DoseStatus.BEFORE_REGISTRATION.value)
+        else now
+    )
     dose.status_changed_at = now
     if status != DoseStatus.SCHEDULED.value:
         # Handling the dose also withdraws any reminder that was queued but not
@@ -362,12 +396,94 @@ def _cancel_notifications(db: Session, dose_ids: list[int]) -> None:
     cancel_pending_dose_notifications(db, dose_ids)
 
 
+def _purge_notifications(db: Session, dose_ids: list[int]) -> None:
+    """For doses whose rows are being deleted, not merely resolved."""
+    from app.notifications.dispatcher import purge_dose_notifications
+
+    purge_dose_notifications(db, dose_ids)
+
+
+def snooze_dose(db: Session, dose_id: int, minutes: int) -> MedicationDose:
+    """Push the REMINDER back, never the dose.
+
+    `scheduled_at` is the historical record of when the dose was due and is
+    deliberately untouched; only `snoozed_until` moves. The dose also stays
+    pending - snoozing is not a way of saying "taken".
+    """
+    if minutes not in SNOOZE_OPTIONS:
+        raise ValidationError({"minutes": "validation.snooze_invalid"})
+    dose = db.get(MedicationDose, dose_id)
+    if dose is None:
+        raise NotFoundError()
+    if dose.status != DoseStatus.SCHEDULED.value:
+        raise ValidationError({"status": "validation.snooze_not_pending"})
+
+    now = now_local()
+    # "Remind me later" only makes sense once the reminders have started. A dose
+    # three days out has nothing to postpone, and snoozing it would produce a
+    # "time for your medication" alert days before the dose is due.
+    if not can_snooze(dose, now):
+        raise ValidationError({"status": "validation.snooze_not_due_yet"})
+
+    dose.snoozed_until = now + timedelta(minutes=minutes)
+    # Withdraw whatever was already queued for it, so the snooze is honoured
+    # immediately rather than after one more reminder slips out.
+    _cancel_notifications(db, [dose.id])
+    db.flush()
+    return dose
+
+
 def dose_counts(medication: Medication) -> dict[str, int]:
     counts = {status.value: 0 for status in DoseStatus}
     for dose in medication.doses:
         counts[dose.status] = counts.get(dose.status, 0) + 1
     counts["total"] = len(medication.doses)
+    # Everything the application could actually ask about. Split by *when the
+    # dose was due* rather than by its current status: recording that you did
+    # take one of the historical doses must not quietly move it into the
+    # denominator of your adherence.
+    registered = registered_at(medication)
+    counts["manageable"] = sum(
+        1 for dose in medication.doses if dose.scheduled_at >= registered
+    )
     return counts
+
+
+def compliance(medication: Medication) -> dict | None:
+    """How many of the doses the application could manage were taken.
+
+    Bookkeeping, not a medical judgement: it counts what you told the
+    application, over the doses the application was in a position to remind you
+    about. Doses due before the medication was registered are excluded from both
+    sides — they are history the app never saw, and that stays true even after
+    you record what actually happened on one of them. Doses still in the future
+    are excluded too, because they have not happened yet.
+
+    The split is by *when the dose was due*, not by its current status, so
+    writing down a historical dose cannot change the number.
+
+    Returns None while there is nothing resolved to measure.
+    """
+    registered = registered_at(medication)
+    resolvable = {
+        DoseStatus.TAKEN.value,
+        DoseStatus.SKIPPED.value,
+        DoseStatus.MISSED.value,
+    }
+
+    managed = [dose for dose in medication.doses if dose.scheduled_at >= registered]
+    taken = sum(1 for dose in managed if dose.status == DoseStatus.TAKEN.value)
+    resolved = sum(1 for dose in managed if dose.status in resolvable)
+    if resolved == 0:
+        return None
+    return {
+        "taken": taken,
+        "resolved": resolved,
+        "percent": round(taken / resolved * 100),
+        "before_registration": sum(
+            1 for dose in medication.doses if dose.scheduled_at < registered
+        ),
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -400,12 +516,14 @@ def serialize_medication(
         "created_at": iso(medication.created_at),
         "next_dose": serialize_dose(upcoming) if upcoming else None,
         "counts": dose_counts(medication),
+        "compliance": compliance(medication),
         "days_remaining": (
             None
             if medication.end_date is None
             else (medication.end_date - reference.date()).days
         ),
         "open_ended": medication.end_date is None,
+        "progress": treatment_progress(medication, reference.date()),
         # The frontend shows the "finish early?" confirmation from this flag
         # instead of re-deriving the rule in JavaScript.
         "needs_complete_confirmation": requires_complete_confirmation(
@@ -424,6 +542,33 @@ def serialize_medication(
     if include_doses:
         data["doses"] = [serialize_dose(dose) for dose in sorted(medication.doses, key=lambda d: d.scheduled_at)]
     return data
+
+
+def treatment_progress(medication: Medication, today: date | None = None) -> dict | None:
+    """How far through the configured treatment period today is.
+
+    Calendar time only. This says nothing about whether the treatment is
+    working - it is the elapsed portion of the dates the user entered, and
+    open-ended treatments have no percentage at all.
+    """
+    if medication.end_date is None:
+        return None
+    today = today or now_local().date()
+    total_days = (medication.end_date - medication.start_date).days + 1
+    if total_days <= 0:
+        return None
+    elapsed = (today - medication.start_date).days + 1
+    current = min(max(elapsed, 0), total_days)
+    return {
+        "current_day": current,
+        "total_days": total_days,
+        "days_remaining": max((medication.end_date - today).days, 0),
+        "percent": round(current / total_days * 100),
+        "started": medication.start_date.isoformat(),
+        "ends": medication.end_date.isoformat(),
+        "not_started": today < medication.start_date,
+        "finished": today > medication.end_date,
+    }
 
 
 def serialize_dose(dose: MedicationDose, medication: Medication | None = None) -> dict:
@@ -445,8 +590,22 @@ def serialize_dose(dose: MedicationDose, medication: Medication | None = None) -
         "status": dose.status,
         "marked_at": iso(dose.marked_at),
         "status_changed_at": iso(dose.status_changed_at),
+        # A snooze moves the reminder only; scheduled_at above is unchanged.
+        "snoozed_until": iso(dose.snoozed_until),
         # From this instant onwards, "Taken" needs no confirmation. The UI
         # compares the current clock against it; the rule itself lives in
         # app/services/scheduling.py and is covered by the tests.
         "confirm_taken_before": iso(taken_confirmation_threshold(dose.scheduled_at)),
+        # Whether "remind me later" is available at all. The same rule the
+        # service enforces, so the button is never offered for a request the
+        # backend would refuse.
+        "can_snooze": can_snooze(dose),
     }
+
+
+def can_snooze(dose: MedicationDose, reference: datetime | None = None) -> bool:
+    """A pending dose whose reminders have already started."""
+    if dose.status != DoseStatus.SCHEDULED.value:
+        return False
+    now = reference or now_local()
+    return dose.scheduled_at <= now + timedelta(minutes=EARLIEST_DOSE_REMINDER_MINUTES)

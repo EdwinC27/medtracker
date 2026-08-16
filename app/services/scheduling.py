@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 from datetime import date, datetime, time, timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.config import DOSE_HORIZON_DAYS, TAKEN_CONFIRMATION_MINUTES
@@ -106,6 +106,38 @@ def expected_dose_times(
     )
 
 
+def _purge_notifications(db: Session, dose_ids: list[int]) -> None:
+    """A deleted dose takes its notifications with it - SQLite reuses ids."""
+    from app.notifications.dispatcher import purge_dose_notifications
+
+    purge_dose_notifications(db, dose_ids)
+
+
+def registered_at(medication: Medication) -> datetime:
+    """The instant the medication started existing in the application.
+
+    This is what separates history from schedule. It is deliberately the
+    medication's own `created_at` and not "today": a treatment entered at 12:00
+    for a dose that was due at 10:00 the same morning has one historical dose,
+    not a whole historical day.
+    """
+    return medication.created_at or now_local()
+
+
+def initial_dose_status(scheduled_at: datetime, registered: datetime) -> str:
+    """What a freshly generated dose starts as.
+
+    A dose whose time had already passed when the medication was registered was
+    never something the application could remind about or the user could mark,
+    so it is recorded as history instead of as a pending task. The comparison is
+    on the full datetime, not the date: 07:00 and 08:00 are historical for a
+    medication added at 08:30, and 09:00 is not.
+    """
+    if scheduled_at < registered:
+        return DoseStatus.BEFORE_REGISTRATION.value
+    return DoseStatus.SCHEDULED.value
+
+
 def rebuild_doses(
     db: Session,
     medication: Medication,
@@ -138,10 +170,12 @@ def rebuild_doses(
         if dose.status != DoseStatus.SCHEDULED.value:
             continue  # never delete something already taken/skipped/missed
         if scheduled_at not in expected:
+            _purge_notifications(db, [dose.id])
             db.delete(dose)
             medication.doses.remove(dose)
             removed += 1
 
+    registered = registered_at(medication)
     added = 0
     for scheduled_at in sorted(expected):
         if from_time is not None and scheduled_at <= from_time:
@@ -151,7 +185,7 @@ def rebuild_doses(
         medication.doses.append(
             MedicationDose(
                 scheduled_at=scheduled_at,
-                status=DoseStatus.SCHEDULED.value,
+                status=initial_dose_status(scheduled_at, registered),
             )
         )
         added += 1
@@ -168,6 +202,7 @@ def clear_upcoming_doses(
     removed = 0
     for dose in list(medication.doses):
         if dose.scheduled_at > boundary and dose.status == DoseStatus.SCHEDULED.value:
+            _purge_notifications(db, [dose.id])
             db.delete(dose)
             medication.doses.remove(dose)
             removed += 1
@@ -190,6 +225,12 @@ def mark_overdue_doses_as_missed(db: Session, grace_minutes: int) -> int:
             select(MedicationDose).where(
                 MedicationDose.status == DoseStatus.SCHEDULED.value,
                 MedicationDose.scheduled_at <= cutoff,
+                # A running snooze keeps the dose pending, so the reminder the
+                # user asked for is not thrown away.
+                or_(
+                    MedicationDose.snoozed_until.is_(None),
+                    MedicationDose.snoozed_until <= now,
+                ),
             )
         )
         .scalars()
@@ -198,6 +239,7 @@ def mark_overdue_doses_as_missed(db: Session, grace_minutes: int) -> int:
     for dose in stale:
         dose.status = DoseStatus.MISSED.value
         dose.status_changed_at = now
+        dose.snoozed_until = None
     if stale:
         db.flush()
     return len(stale)
