@@ -55,11 +55,28 @@ def test_end_date_before_start_date_is_rejected(db):
     assert exc.value.fields["end_date"] == "validation.end_before_start"
 
 
-def test_missing_name_and_dose_are_reported_per_field(db):
+def test_only_name_frequency_and_start_date_are_required(db):
+    """v2: dose, unit, quantity, form, comments, image and end date are all
+    optional, and the backend is what enforces the three that are not."""
     with pytest.raises(ValidationError) as exc:
-        service.create_medication(db, make_payload(name="", dose_amount=""))
+        service.create_medication(db, {"name": "", "frequency_hours": None, "start_date": ""})
     assert exc.value.fields["name"] == "validation.name_required"
-    assert exc.value.fields["dose_amount"] == "validation.dose_required"
+    assert exc.value.fields["frequency_hours"] == "validation.frequency_required"
+    assert exc.value.fields["start_date"] == "validation.start_date_required"
+
+    minimal = service.create_medication(
+        db,
+        {
+            "name": "Vitamin D",
+            "frequency_hours": 24,
+            "start_date": now_local().date().isoformat(),
+            "end_date": (now_local().date() + timedelta(days=3)).isoformat(),
+            "first_dose_time": "09:00",
+        },
+    )
+    assert minimal.dose_amount is None
+    assert minimal.quantity is None
+    assert minimal.doses
 
 
 def test_invalid_frequency_is_rejected(db):

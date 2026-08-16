@@ -22,21 +22,34 @@
 
     <div class="form__body">
       <div class="field">
-        <label for="appt-doctor" data-i18n="appointment.doctor"></label>
-        <input id="appt-doctor" name="doctor_name" type="text" required maxlength="160" data-i18n-placeholder="appointment.doctor_placeholder">
-        <p class="field__error" data-error-for="doctor_name"></p>
+        <label for="appt-doctor"><span data-i18n="appointment.doctor_select"></span> <span class="req">*</span></label>
+        <select id="appt-doctor" name="doctor_id" required></select>
+        <p class="hint hidden" id="appt-no-doctors" data-i18n="appointment.add_doctor_first"></p>
+        <p class="field__error" data-error-for="doctor_id"></p>
       </div>
 
       <div class="field-row">
         <div class="field">
-          <label for="appt-date" data-i18n="appointment.date"></label>
+          <label for="appt-date"><span data-i18n="appointment.date"></span> <span class="req">*</span></label>
           <input id="appt-date" name="date" type="date" required>
           <p class="field__error" data-error-for="scheduled_at"></p>
         </div>
         <div class="field">
-          <label for="appt-time" data-i18n="appointment.time"></label>
+          <label for="appt-time"><span data-i18n="appointment.time"></span> <span class="req">*</span></label>
           <input id="appt-time" name="time" type="time" required>
         </div>
+      </div>
+
+      <div class="field">
+        <span class="label" data-i18n="appointment.is_follow_up"></span>
+        <label class="check"><input type="radio" name="is_follow_up" value="no" checked> <span data-i18n="common.no"></span></label>
+        <label class="check"><input type="radio" name="is_follow_up" value="yes"> <span data-i18n="common.yes"></span></label>
+        <div id="appt-follow-up-box" class="hidden">
+          <label for="appt-follow-up" data-i18n="appointment.follow_up_select"></label>
+          <select id="appt-follow-up" name="follow_up_of_id"></select>
+          <p class="hint" data-i18n="appointment.follow_up_hint"></p>
+        </div>
+        <p class="field__error" data-error-for="follow_up_of_id"></p>
       </div>
 
       <div class="field">

@@ -26,7 +26,7 @@ def payload(**overrides):
 
 
 def test_pages_render(client):
-    for path in ("/", "/medications", "/appointments", "/history", "/settings"):
+    for path in ("/", "/medications", "/doctors", "/appointments", "/history", "/settings"):
         response = client.get(path)
         assert response.status_code == 200
         assert "MedTracker" in response.text
@@ -99,10 +99,11 @@ def test_dose_can_be_marked_and_unmarked(client):
 
 def test_dashboard_reflects_the_data(client):
     client.post("/api/medications", json=payload())
+    doctor = client.post("/api/doctors", json={"name": "Dr. Smith"}).json()
     client.post(
         "/api/appointments",
         json={
-            "doctor_name": "Dr. Smith",
+            "doctor_id": doctor["id"],
             "scheduled_at": (now_local() + timedelta(days=6)).replace(microsecond=0).isoformat(),
         },
     )
@@ -115,10 +116,11 @@ def test_dashboard_reflects_the_data(client):
 
 def test_appointment_medication_relationship_through_the_api(client):
     medication = client.post("/api/medications", json=payload()).json()
+    doctor = client.post("/api/doctors", json={"name": "Dr. Smith"}).json()
     appointment = client.post(
         "/api/appointments",
         json={
-            "doctor_name": "Dr. Smith",
+            "doctor_id": doctor["id"],
             "scheduled_at": (now_local() + timedelta(days=4)).replace(microsecond=0).isoformat(),
             "treatment": "Ear infection",
             "medication_ids": [medication["id"]],
@@ -180,3 +182,60 @@ def test_notification_endpoints(client):
     assert client.post("/api/notifications/delivered", json={"ids": []}).json()["ok"] is True
     result = client.post("/api/notifications/run-now").json()
     assert "dose_notifications" in result
+
+
+def test_the_dashboard_handles_an_open_ended_treatment(client):
+    """A medication with no end date must not break "ending soon"."""
+    client.post("/api/medications", json=payload(end_date=None, name="Vitamin D"))
+    client.post("/api/medications", json=payload(name="Amoxicillin"))
+
+    data = client.get("/api/dashboard").json()
+
+    assert len(data["active_medications"]) == 2
+    open_ended = [m for m in data["active_medications"] if m["name"] == "Vitamin D"][0]
+    assert open_ended["open_ended"] is True
+    assert open_ended["days_remaining"] is None
+    # Only the one with a real end date can appear in the warning list.
+    assert all(m["end_date"] is not None for m in data["ending_soon"])
+
+
+def test_doctor_crud_through_the_api(client):
+    created = client.post(
+        "/api/doctors",
+        json={"name": "Dr. Smith", "occupation": "Otolaryngologist", "phone": "555-555-5555"},
+    )
+    assert created.status_code == 201
+    doctor = created.json()
+
+    assert client.get("/api/doctors").json()["items"][0]["name"] == "Dr. Smith"
+
+    updated = client.put(
+        f"/api/doctors/{doctor['id']}", json={"name": "Dr. J. Smith", "phone": "555-000"}
+    ).json()
+    assert updated["name"] == "Dr. J. Smith"
+
+    detail = client.get(f"/api/doctors/{doctor['id']}").json()
+    assert detail["appointments"] == []
+
+    assert client.delete(f"/api/doctors/{doctor['id']}").status_code == 200
+    assert client.get("/api/doctors").json()["items"] == []
+
+
+def test_follow_up_options_endpoint(client):
+    doctor = client.post("/api/doctors", json={"name": "Dr. Smith"}).json()
+    past = (now_local() - timedelta(days=5)).replace(microsecond=0)
+    future = (now_local() + timedelta(days=5)).replace(microsecond=0)
+
+    earlier = client.post(
+        "/api/appointments",
+        json={"doctor_id": doctor["id"], "scheduled_at": past.isoformat()},
+    ).json()
+    client.post(
+        "/api/appointments",
+        json={"doctor_id": doctor["id"], "scheduled_at": future.isoformat()},
+    )
+
+    options = client.get(
+        "/api/appointments/follow-up-options?before=" + now_local().isoformat()
+    ).json()
+    assert [item["id"] for item in options["items"]] == [earlier["id"]]

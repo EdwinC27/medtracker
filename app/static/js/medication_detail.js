@@ -33,9 +33,11 @@
 
     const meta = el('dl', 'meta-list');
     addMeta(meta, 'medication.status', null, UI.badge(medication.status));
-    addMeta(meta, 'medication.treatment', T.t('medication.treatment_range', {
-      start: F.dateLong(medication.start_date), end: F.dateLong(medication.end_date),
-    }));
+    addMeta(meta, 'medication.treatment', medication.end_date
+      ? T.t('medication.treatment_range', {
+          start: F.dateLong(medication.start_date), end: F.dateLong(medication.end_date),
+        })
+      : F.dateLong(medication.start_date) + ' → ' + T.t('medication.no_end_date'));
     addMeta(meta, 'medication.first_dose_time', F.time('2000-01-01T' + medication.first_dose_time));
     addMeta(meta, 'medication.next_dose', medication.next_dose
       ? F.whenLabel(medication.next_dose.scheduled_at)

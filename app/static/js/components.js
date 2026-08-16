@@ -37,6 +37,16 @@
       const btn = el('button', 'btn btn--sm ' + variant, T.t(labelKey));
       btn.type = 'button';
       btn.addEventListener('click', async function () {
+        // Taking a dose more than 30 minutes early is unusual enough to ask
+        // about; anything from 30 minutes before onwards goes straight through.
+        if (status === 'taken' && isEarly(dose)) {
+          const ok = await UI.confirm(
+            'confirm.taken_early_title', 'confirm.taken_early_body',
+            { scheduled: F.time(dose.scheduled_at), now: F.time(new Date()) },
+            'actions.mark_taken', false
+          );
+          if (!ok) return;
+        }
         btn.disabled = true;
         try {
           await API.post('/api/doses/' + dose.id + '/status', { status: status });
@@ -52,6 +62,14 @@
     }
 
     return row;
+  }
+
+  /* The threshold comes from the server (scheduled time minus 30 minutes), so
+     the rule lives in one tested place instead of being re-derived here. */
+  function isEarly(dose) {
+    if (!dose.confirm_taken_before) return false;
+    const threshold = F.parse(dose.confirm_taken_before);
+    return threshold ? new Date() < threshold : false;
   }
 
   /* Medication card used on the dashboard and on the medications list. */
@@ -82,10 +100,13 @@
     }
     card.appendChild(next);
 
-    card.appendChild(el('div', 'card__meta', T.t('medication.treatment') + ': ' + T.t('medication.treatment_range', {
-      start: F.dateShort(medication.start_date),
-      end: F.dateShort(medication.end_date),
-    })));
+    card.appendChild(el('div', 'card__meta', T.t('medication.treatment') + ': ' +
+      (medication.end_date
+        ? T.t('medication.treatment_range', {
+            start: F.dateShort(medication.start_date),
+            end: F.dateShort(medication.end_date),
+          })
+        : F.dateShort(medication.start_date) + ' → ' + T.t('medication.no_end_date'))));
 
     if (medication.comments) card.appendChild(el('div', 'card__meta', medication.comments));
 
@@ -108,6 +129,17 @@
           '/api/medications/' + medication.id + '/suspend', 'message.medication_suspended');
       }));
       buttons.push(action('actions.complete', function () {
+        // Finishing before the planned end date is a different decision from
+        // finishing on time, and says so.
+        if (medication.needs_complete_confirmation) {
+          const early = medication.end_date
+            ? ['confirm.complete_early_title', 'confirm.complete_early_body', {
+                end: F.dateLong(medication.end_date), today: F.dateLong(new Date()),
+              }]
+            : ['confirm.complete_early_title', 'confirm.complete_open_ended_body', {}];
+          return confirmThen(early[0], early[1], early[2], 'actions.complete',
+            '/api/medications/' + medication.id + '/complete', 'message.medication_completed');
+        }
         return confirmThen('confirm.complete_title', 'confirm.complete_body', {}, 'actions.complete',
           '/api/medications/' + medication.id + '/complete', 'message.medication_completed');
       }));

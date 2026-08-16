@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import (
     ALLOWED_IMAGE_EXTENSIONS,
     APP_VERSION,
+    DOSE_NOTIFICATION_OFFSETS,
     FORM_OPTIONS,
     FREQUENCY_OPTIONS,
     MAX_IMAGE_BYTES,
@@ -36,6 +37,7 @@ from app.notifications.dispatcher import (
 )
 from app.routes.deps import get_language
 from app.services import appointments as appointment_service
+from app.services import doctors as doctor_service
 from app.services import medications as medication_service
 from app.services.dashboard import build_dashboard
 from app.services.errors import NotFoundError, ValidationError
@@ -67,6 +69,7 @@ def bootstrap(
             "frequencies": list(FREQUENCY_OPTIONS),
             "units": list(UNIT_OPTIONS),
             "forms": list(FORM_OPTIONS),
+            "dose_offsets": [kind for kind, _minutes in DOSE_NOTIFICATION_OFFSETS],
         },
         "languages": available_languages(),
         "version": APP_VERSION,
@@ -184,10 +187,42 @@ async def upload_image(file: UploadFile = File(...)):
 # Appointments
 # --------------------------------------------------------------------------- #
 @router.get("/appointments")
-def list_appointments(scope: str = "all", db: Session = Depends(get_db)):
-    items = appointment_service.list_appointments(db, scope)
+def list_appointments(
+    scope: str = "all", doctor_id: int | None = None, db: Session = Depends(get_db)
+):
+    items = appointment_service.list_appointments(db, scope, doctor_id)
     return {
         "items": [appointment_service.serialize_appointment(item) for item in items]
+    }
+
+
+@router.get("/appointments/follow-up-options")
+def follow_up_options(before: str, exclude: int | None = None, db: Session = Depends(get_db)):
+    """Earlier appointments that may be selected as "follow-up of ...".
+
+    `before` is the new appointment's own date and time, so a visit that has
+    not happened yet can never appear in the list.
+    """
+    from app.utils.timeutil import parse_datetime
+
+    try:
+        moment = parse_datetime(before)
+    except (TypeError, ValueError):
+        raise ValidationError({"scheduled_at": "validation.date_invalid"}) from None
+    if moment is None:
+        raise ValidationError({"scheduled_at": "validation.appointment_datetime_required"})
+
+    items = appointment_service.eligible_follow_up_targets(db, moment, exclude)
+    return {
+        "items": [
+            {
+                "id": item.id,
+                "doctor_name": item.doctor.name if item.doctor else None,
+                "scheduled_at": item.scheduled_at.isoformat(),
+                "treatment": item.treatment,
+            }
+            for item in items
+        ]
     }
 
 
@@ -222,6 +257,46 @@ def delete_appointment(appointment_id: int, db: Session = Depends(get_db)):
     appointment_service.delete_appointment(db, appointment_id)
     db.commit()
     return {"ok": True, "message": "message.appointment_deleted"}
+
+
+# --------------------------------------------------------------------------- #
+# Doctors
+# --------------------------------------------------------------------------- #
+@router.get("/doctors")
+def list_doctors(search: str | None = None, db: Session = Depends(get_db)):
+    items = doctor_service.list_doctors(db, search)
+    return {"items": [doctor_service.serialize_doctor(item) for item in items]}
+
+
+@router.get("/doctors/{doctor_id}")
+def get_doctor(doctor_id: int, db: Session = Depends(get_db)):
+    doctor = doctor_service.get_doctor(db, doctor_id)
+    return doctor_service.serialize_doctor(doctor, include_appointments=True)
+
+
+@router.post("/doctors", status_code=201)
+async def create_doctor(request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    doctor = doctor_service.create_doctor(db, data)
+    db.commit()
+    db.refresh(doctor)
+    return doctor_service.serialize_doctor(doctor)
+
+
+@router.put("/doctors/{doctor_id}")
+async def update_doctor(doctor_id: int, request: Request, db: Session = Depends(get_db)):
+    data = await request.json()
+    doctor = doctor_service.update_doctor(db, doctor_id, data)
+    db.commit()
+    db.refresh(doctor)
+    return doctor_service.serialize_doctor(doctor)
+
+
+@router.delete("/doctors/{doctor_id}")
+def delete_doctor(doctor_id: int, db: Session = Depends(get_db)):
+    doctor_service.delete_doctor(db, doctor_id)
+    db.commit()
+    return {"ok": True, "message": "message.doctor_deleted"}
 
 
 # --------------------------------------------------------------------------- #
@@ -278,6 +353,39 @@ def notifications_test(
     body = t("notification.test_body", language)
     sent, error = windows_notifier.send_toast(title, body)
     return {"windows_sent": sent, "error": error, "title": title, "body": body}
+
+
+@router.post("/notifications/test-email")
+def notifications_test_email(
+    db: Session = Depends(get_db), language: str = Depends(get_language)
+):
+    """Send a real test message with the SMTP settings currently saved.
+
+    The response carries the technical SMTP error verbatim when it fails,
+    because that is what makes a bad host or a rejected password diagnosable —
+    the UI shows it next to a translated headline.
+    """
+    from app.i18n import t
+    from app.notifications.email import config_from_settings, send_email
+
+    settings = get_settings(db)
+    config = config_from_settings(settings)
+    if not config.is_complete:
+        return {"sent": False, "error": None, "reason": "validation.email_incomplete"}
+
+    subject = t("email.test_subject", language)
+    body = "\n".join(
+        [
+            t("notification.test_title", language),
+            "",
+            t("notification.test_body", language),
+            "",
+            "--",
+            t("app.disclaimer_short", language),
+        ]
+    )
+    sent, error = send_email(config, subject, body)
+    return {"sent": sent, "error": error, "recipient": config.recipient}
 
 
 @router.post("/notifications/run-now")

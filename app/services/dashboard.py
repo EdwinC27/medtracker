@@ -72,10 +72,12 @@ def build_dashboard(db: Session) -> dict:
         .all()
     )
 
+    # An open-ended treatment has no end date, so it can never be "ending soon".
     ending_soon = [
         medication
         for medication in active
-        if 0 <= (medication.end_date - today).days <= settings.ending_soon_days
+        if medication.end_date is not None
+        and 0 <= (medication.end_date - today).days <= settings.ending_soon_days
     ]
 
     appointment = next_appointment(db, now)

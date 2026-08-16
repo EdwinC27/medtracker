@@ -34,6 +34,7 @@
       <label for="set-missed" data-i18n="settings.missed_after_minutes"></label>
       <input id="set-missed" name="missed_after_minutes" type="number" min="5" max="1440" required>
       <p class="hint" data-i18n="settings.missed_after_hint"></p>
+      <p class="field__error" id="grace-warning"></p>
       <p class="field__error" data-error-for="missed_after_minutes"></p>
     </div>
   </section>
@@ -47,8 +48,22 @@
     <label class="check"><input type="checkbox" name="browser_notifications"> <span data-i18n="settings.browser_notifications"></span></label>
     <p class="hint" data-i18n="settings.browser_notifications_hint"></p>
 
+    <label class="check"><input type="checkbox" name="email_notifications"> <span data-i18n="settings.email_notifications"></span></label>
+    <p class="hint" data-i18n="settings.email_notifications_hint"></p>
+    <p class="field__error" data-error-for="email_notifications"></p>
+
     <label class="check"><input type="checkbox" name="medication_reminders"> <span data-i18n="settings.medication_reminders"></span></label>
     <label class="check"><input type="checkbox" name="appointment_reminders"> <span data-i18n="settings.appointment_reminders"></span></label>
+
+    <h3 data-i18n="settings.dose_reminders"></h3>
+    <p class="hint" data-i18n="settings.dose_reminders_hint"></p>
+    <label class="check"><input type="checkbox" name="dose_before_30"> <span data-i18n="dose_offset.before_30"></span></label>
+    <label class="check"><input type="checkbox" name="dose_before_15"> <span data-i18n="dose_offset.before_15"></span></label>
+    <label class="check"><input type="checkbox" name="dose_before_5"> <span data-i18n="dose_offset.before_5"></span></label>
+    <label class="check"><input type="checkbox" name="dose_at_time"> <span data-i18n="dose_offset.at_time"></span></label>
+    <label class="check"><input type="checkbox" name="dose_after_15"> <span data-i18n="dose_offset.after_15"></span></label>
+    <label class="check"><input type="checkbox" name="dose_after_30"> <span data-i18n="dose_offset.after_30"></span></label>
+    <label class="check"><input type="checkbox" name="dose_overdue"> <span data-i18n="dose_offset.overdue"></span></label>
 
     <h3 data-i18n="settings.appointment_reminder_defaults"></h3>
     <p class="hint" data-i18n="settings.appointment_reminder_defaults_hint"></p>
@@ -61,6 +76,64 @@
       <button type="button" class="btn btn--ghost btn--sm" id="test-notification" data-i18n="settings.test_notification"></button>
     </div>
     <p class="hint" id="permission-status"></p>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings.email_section"></h2>
+    <p class="hint" id="secret-backend-note"></p>
+
+    <div class="field">
+      <label for="set-email-to" data-i18n="settings.email_recipient"></label>
+      <input id="set-email-to" name="email_recipient" type="email" maxlength="320" autocomplete="off">
+      <p class="field__error" data-error-for="email_recipient"></p>
+    </div>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="set-smtp-host" data-i18n="settings.smtp_host"></label>
+        <input id="set-smtp-host" name="smtp_host" type="text" maxlength="200" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="set-smtp-port" data-i18n="settings.smtp_port"></label>
+        <input id="set-smtp-port" name="smtp_port" type="number" min="1" max="65535">
+        <p class="field__error" data-error-for="smtp_port"></p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="set-smtp-security" data-i18n="settings.smtp_security"></label>
+      <select id="set-smtp-security" name="smtp_security">
+        <option value="starttls" data-i18n="settings.security_starttls"></option>
+        <option value="ssl" data-i18n="settings.security_ssl"></option>
+        <option value="none" data-i18n="settings.security_none"></option>
+      </select>
+    </div>
+
+    <div class="field">
+      <label for="set-smtp-user" data-i18n="settings.smtp_username"></label>
+      <input id="set-smtp-user" name="smtp_username" type="text" maxlength="320" autocomplete="off">
+    </div>
+
+    <div class="field">
+      <label for="set-smtp-password" data-i18n="settings.smtp_password"></label>
+      <input id="set-smtp-password" name="smtp_password" type="password" autocomplete="new-password">
+      <p class="hint" data-i18n="settings.smtp_password_hint"></p>
+      <p class="hint" id="smtp-password-state"></p>
+    </div>
+
+    <div class="field">
+      <label for="set-email-from" data-i18n="settings.email_sender"></label>
+      <input id="set-email-from" name="email_sender" type="email" maxlength="320" autocomplete="off">
+      <p class="hint" data-i18n="settings.email_sender_hint"></p>
+      <p class="field__error" data-error-for="email_sender"></p>
+    </div>
+
+    <p class="hint" data-i18n="settings.gmail_hint"></p>
+
+    <div class="row-actions">
+      <button type="button" class="btn btn--ghost btn--sm" id="test-email" data-i18n="settings.test_email"></button>
+    </div>
+    <p class="hint" id="email-test-result"></p>
   </section>
 
   <section class="card">

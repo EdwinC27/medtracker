@@ -37,7 +37,8 @@
     meta.appendChild(el('dt', null, T.t('medication.start_date')));
     meta.appendChild(el('dd', null, F.dateLong(medication.start_date)));
     meta.appendChild(el('dt', null, T.t('medication.end_date')));
-    meta.appendChild(el('dd', null, F.dateLong(medication.end_date)));
+    meta.appendChild(el('dd', null, medication.end_date
+      ? F.dateLong(medication.end_date) : T.t('medication.no_end_date')));
     meta.appendChild(el('dt', null, T.t('medication.status')));
     const statusCell = el('dd');
     statusCell.appendChild(UI.badge(medication.status));

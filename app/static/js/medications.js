@@ -82,17 +82,16 @@
     const today = new Date();
     if (medication) {
       f.name.value = medication.name;
-      f.dose_amount.value = medication.dose_amount;
-      f.quantity.value = medication.quantity;
+      f.dose_amount.value = medication.dose_amount || '';
+      f.quantity.value = medication.quantity === null ? '' : medication.quantity;
       f.comments.value = medication.comments || '';
       f.start_date.value = medication.start_date;
-      f.end_date.value = medication.end_date;
+      f.end_date.value = medication.end_date || '';
       f.first_dose_time.value = medication.first_dose_time;
       setPreviewImage(medication.image_url);
     } else {
       f.start_date.value = F.inputDate(today);
-      const end = new Date(today.getTime() + 6 * 86400000);
-      f.end_date.value = F.inputDate(end);
+      f.end_date.value = '';           // optional: empty means open-ended
       f.first_dose_time.value = T.settings.default_first_dose_time;
       setPreviewImage(null);
     }

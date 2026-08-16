@@ -96,11 +96,15 @@
     return el('div', 'med-thumb' + (large ? ' med-thumb--lg' : ''), initial);
   }
 
+  /* "500 mg — 1 capsule". Dose and quantity are both optional since v2, so
+     whichever half is missing is simply left out. */
   function doseSummary(item) {
-    return T.t('medication.dose_summary', {
-      dose: F.dose(item.dose_amount, item.dose_unit),
-      quantity: F.quantity(item.quantity, item.form),
-    });
+    const parts = [];
+    if (item.dose_amount) parts.push(F.dose(item.dose_amount, item.dose_unit));
+    if (item.quantity) parts.push(F.quantity(item.quantity, item.form));
+    if (!parts.length) return '';
+    if (parts.length === 1) return parts[0];
+    return T.t('medication.dose_summary', { dose: parts[0], quantity: parts[1] });
   }
 
   function setupChrome() {

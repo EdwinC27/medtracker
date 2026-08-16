@@ -3,7 +3,7 @@
   'use strict';
 
   const el = UI.el;
-  const state = { filter: 'all', editing: null, medications: [] };
+  const state = { filter: 'all', editing: null, medications: [], doctors: [] };
 
   const dialog = function () { return document.getElementById('appointment-dialog'); };
   const form = function () { return document.getElementById('appointment-form'); };
@@ -25,15 +25,22 @@
 
   function card(appointment) {
     const box = el('article', 'card');
-    const link = el('a', null, appointment.doctor_name);
+    const link = el('a', null, appointment.doctor_name || '');
     link.href = '/appointments/' + appointment.id;
     const heading = el('h3');
     heading.appendChild(link);
     box.appendChild(heading);
 
     box.appendChild(el('div', 'card__meta', F.dateTime(appointment.scheduled_at)));
+    if (appointment.doctor_occupation) {
+      box.appendChild(el('div', 'card__meta', appointment.doctor_occupation));
+    }
     if (appointment.location) box.appendChild(el('div', 'card__meta', appointment.location));
     if (appointment.treatment) box.appendChild(el('div', 'card__meta', appointment.treatment));
+    if (appointment.follow_up_of) {
+      box.appendChild(el('div', 'card__meta', T.t('appointment.follow_up_of') + ': ' +
+        F.dateLong(appointment.follow_up_of.scheduled_at)));
+    }
 
     if (appointment.medications.length) {
       const meds = el('div', 'card__meta', T.t('appointment.medications') + ': ' +
@@ -73,6 +80,75 @@
     } catch (e) { state.medications = []; }
   }
 
+  async function loadDoctors() {
+    try {
+      const data = await API.get('/api/doctors');
+      state.doctors = data.items;
+    } catch (e) { state.doctors = []; }
+  }
+
+  function renderDoctorSelect(selectedId) {
+    const select = document.getElementById('appt-doctor');
+    const warning = document.getElementById('appt-no-doctors');
+    select.textContent = '';
+
+    const placeholder = el('option', null, T.t('doctor.select'));
+    placeholder.value = '';
+    select.appendChild(placeholder);
+
+    state.doctors.forEach(function (doctor) {
+      const label = doctor.occupation ? doctor.name + ' — ' + doctor.occupation : doctor.name;
+      const option = el('option', null, label);
+      option.value = doctor.id;
+      select.appendChild(option);
+    });
+    select.value = selectedId ? String(selectedId) : '';
+    warning.classList.toggle('hidden', state.doctors.length > 0);
+  }
+
+  /* The list of appointments that may be chosen as "follow-up of ..." is
+     recomputed from the server whenever the new appointment's date changes,
+     so a visit that has not happened yet can never appear in it. */
+  async function refreshFollowUpOptions(selectedId) {
+    const select = document.getElementById('appt-follow-up');
+    const f = form();
+    const when = f.date.value && f.time.value ? f.date.value + 'T' + f.time.value : '';
+    select.textContent = '';
+    if (!when) return;
+
+    let items = [];
+    try {
+      const query = '/api/appointments/follow-up-options?before=' + encodeURIComponent(when) +
+        (state.editing ? '&exclude=' + state.editing.id : '');
+      items = (await API.get(query)).items;
+    } catch (e) { items = []; }
+
+    if (!items.length) {
+      const none = el('option', null, T.t('appointment.follow_up_none'));
+      none.value = '';
+      select.appendChild(none);
+      return;
+    }
+    const placeholder = el('option', null, T.t('appointment.follow_up_select'));
+    placeholder.value = '';
+    select.appendChild(placeholder);
+    items.forEach(function (item) {
+      const option = el('option', null,
+        (item.doctor_name || '') + ' — ' + F.dateLong(item.scheduled_at));
+      option.value = item.id;
+      select.appendChild(option);
+    });
+    if (selectedId) select.value = String(selectedId);
+  }
+
+  function setFollowUpMode(isFollowUp) {
+    const box = document.getElementById('appt-follow-up-box');
+    box.classList.toggle('hidden', !isFollowUp);
+    form().querySelectorAll('input[name=is_follow_up]').forEach(function (radio) {
+      radio.checked = radio.value === (isFollowUp ? 'yes' : 'no');
+    });
+  }
+
   function renderMedicationChecks(selectedIds) {
     const box = document.getElementById('appt-medications');
     box.textContent = '';
@@ -104,7 +180,7 @@
 
     if (appointment) {
       const when = F.parse(appointment.scheduled_at);
-      f.doctor_name.value = appointment.doctor_name;
+      renderDoctorSelect(appointment.doctor_id);
       f.date.value = F.inputDate(when);
       f.time.value = String(when.getHours()).padStart(2, '0') + ':' + String(when.getMinutes()).padStart(2, '0');
       f.location.value = appointment.location || '';
@@ -115,15 +191,19 @@
       f.reminder_day_1.checked = appointment.reminder_day_1;
       f.reminder_hours_3.checked = appointment.reminder_hours_3;
       renderMedicationChecks(appointment.medications.map(function (m) { return m.id; }));
+      setFollowUpMode(Boolean(appointment.follow_up_of));
+      refreshFollowUpOptions(appointment.follow_up_of ? appointment.follow_up_of.id : null);
     } else {
       const prefill = prefillFromQuery();
+      renderDoctorSelect(prefill.doctorId);
       f.date.value = prefill.date || F.inputDate(new Date());
       f.time.value = prefill.time || '09:00';
-      if (prefill.doctor) f.doctor_name.value = prefill.doctor;
       f.reminder_days_3.checked = T.settings.appt_reminder_days_3;
       f.reminder_day_1.checked = T.settings.appt_reminder_day_1;
       f.reminder_hours_3.checked = T.settings.appt_reminder_hours_3;
       renderMedicationChecks([]);
+      setFollowUpMode(false);
+      refreshFollowUpOptions(null);
     }
 
     dialog().showModal();
@@ -133,7 +213,7 @@
   function prefillFromQuery() {
     const params = new URLSearchParams(window.location.search);
     const at = params.get('at');
-    const result = { doctor: params.get('doctor') };
+    const result = { doctorId: params.get('doctor_id') };
     if (at) {
       const parsed = F.parse(at);
       if (parsed) {
@@ -155,8 +235,10 @@
       .call(document.querySelectorAll('#appt-medications input:checked'))
       .map(function (input) { return input.value; });
 
+    const isFollowUp = f.querySelector('input[name=is_follow_up]:checked').value === 'yes';
     const payload = {
-      doctor_name: f.doctor_name.value,
+      doctor_id: f.doctor_id.value || null,
+      follow_up_of_id: isFollowUp ? (f.follow_up_of_id.value || null) : null,
       scheduled_at: f.date.value && f.time.value ? f.date.value + 'T' + f.time.value : '',
       location: f.location.value,
       treatment: f.treatment.value,
@@ -191,7 +273,19 @@
   }
 
   async function render() {
-    await loadMedications();
+    await Promise.all([loadMedications(), loadDoctors()]);
+
+    form().querySelectorAll('input[name=is_follow_up]').forEach(function (radio) {
+      radio.addEventListener('change', function () {
+        setFollowUpMode(this.value === 'yes');
+        if (this.value === 'yes') refreshFollowUpOptions(null);
+      });
+    });
+    ['appt-date', 'appt-time'].forEach(function (id) {
+      document.getElementById(id).addEventListener('change', function () {
+        refreshFollowUpOptions(document.getElementById('appt-follow-up').value || null);
+      });
+    });
 
     document.getElementById('appointment-filters').addEventListener('click', function (event) {
       const chip = event.target.closest('[data-filter]');

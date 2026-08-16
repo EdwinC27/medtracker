@@ -90,7 +90,8 @@
       info.appendChild(el('h3', null, medication.name));
       const days = medication.days_remaining;
       let label;
-      if (days <= 0) label = T.t('dashboard.ends_today');
+      if (days === null) label = T.t('medication.open_ended');
+      else if (days <= 0) label = T.t('dashboard.ends_today');
       else if (days === 1) label = T.t('dashboard.ends_in_one_day');
       else label = T.t('dashboard.ends_in_days', { count: days });
       info.appendChild(el('div', 'card__meta', label));

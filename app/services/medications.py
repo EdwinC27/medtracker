@@ -25,6 +25,8 @@ from app.services.scheduling import (
     clear_upcoming_doses,
     next_dose_for,
     rebuild_doses,
+    requires_complete_confirmation,
+    taken_confirmation_threshold,
 )
 from app.services.settings_service import get_settings
 from app.utils.timeutil import iso, now_local, parse_date, parse_time
@@ -56,7 +58,12 @@ def get_medication(db: Session, medication_id: int) -> Medication:
 # Validation
 # --------------------------------------------------------------------------- #
 def _validate(data: dict, current: Medication | None = None) -> dict:
-    """Normalise and validate a medication payload. Raises ValidationError."""
+    """Normalise and validate a medication payload. Raises ValidationError.
+
+    Since v2 only three things are required: name, frequency and start date.
+    Dose, unit, quantity, form, comments, image and end date are all optional,
+    and this check is enforced here in the backend, not only by the browser.
+    """
     fields: dict[str, str] = {}
     clean: dict = {}
 
@@ -66,33 +73,43 @@ def _validate(data: dict, current: Medication | None = None) -> dict:
     clean["name"] = name[:160]
 
     dose_amount = str(data.get("dose_amount") or "").strip()
-    if not dose_amount:
-        fields["dose_amount"] = "validation.dose_required"
-    clean["dose_amount"] = dose_amount[:40]
+    clean["dose_amount"] = dose_amount[:40] or None
 
-    dose_unit = (data.get("dose_unit") or "mg").strip().lower()
-    clean["dose_unit"] = dose_unit if dose_unit in UNIT_OPTIONS else "mg"
+    dose_unit = (data.get("dose_unit") or "").strip().lower()
+    clean["dose_unit"] = dose_unit if dose_unit in UNIT_OPTIONS else ("mg" if dose_amount else None)
 
     raw_quantity = data.get("quantity")
     if raw_quantity in (None, ""):
-        raw_quantity = 1
-    try:
-        quantity = float(str(raw_quantity).replace(",", "."))
-        if quantity <= 0:
-            raise ValueError
-        clean["quantity"] = quantity
-    except (TypeError, ValueError):
-        fields["quantity"] = "validation.quantity_positive"
-        clean["quantity"] = 1.0
+        clean["quantity"] = None
+    else:
+        try:
+            quantity = float(str(raw_quantity).replace(",", "."))
+            if quantity <= 0:
+                raise ValueError
+            clean["quantity"] = quantity
+        except (TypeError, ValueError):
+            fields["quantity"] = "validation.quantity_positive"
+            clean["quantity"] = None
 
-    form = (data.get("form") or "tablet").strip().lower()
-    clean["form"] = form if form in FORM_OPTIONS else "other"
+    form = (data.get("form") or "").strip().lower()
+    if form:
+        clean["form"] = form if form in FORM_OPTIONS else "other"
+    else:
+        clean["form"] = "other" if clean["quantity"] else None
 
     comments = data.get("comments")
     clean["comments"] = (comments or "").strip()[:2000] or None
 
-    start_date = _safe_date(data.get("start_date"), fields, "start_date", "validation.start_date_required")
-    end_date = _safe_date(data.get("end_date"), fields, "end_date", "validation.end_date_required")
+    start_date = _safe_date(
+        data.get("start_date"), fields, "start_date", "validation.start_date_required"
+    )
+    # Optional since v2: no end date means an open-ended treatment.
+    try:
+        end_date = parse_date(data.get("end_date"))
+    except (TypeError, ValueError):
+        end_date = None
+        fields["end_date"] = "validation.date_invalid"
+
     if start_date and end_date:
         if end_date < start_date:
             fields["end_date"] = "validation.end_before_start"
@@ -177,7 +194,7 @@ def create_medication(db: Session, data: dict) -> Medication:
     # Build the full schedule first, then decide the status: a treatment that is
     # entered after it ended still gets its dose history.
     rebuild_doses(db, medication, from_time=None)
-    if medication.end_date < now_local().date():
+    if medication.end_date is not None and medication.end_date < now_local().date():
         medication.status = MedicationStatus.COMPLETED.value
         medication.completed_at = now_local()
 
@@ -222,7 +239,7 @@ def update_medication(db: Session, medication_id: int, data: dict) -> Medication
     if (
         medication.status == MedicationStatus.COMPLETED.value
         and end_date_changed
-        and clean["end_date"] >= now_local().date()
+        and (clean["end_date"] is None or clean["end_date"] >= now_local().date())
     ):
         medication.status = MedicationStatus.ACTIVE.value
         medication.completed_at = None
@@ -243,6 +260,7 @@ def delete_medication(db: Session, medication_id: int) -> None:
     """Hard delete. Doses cascade; appointments themselves are kept."""
     medication = get_medication(db, medication_id)
     image_path = medication.image_path
+    _cancel_notifications(db, [dose.id for dose in medication.doses])
     medication.appointments.clear()
     db.delete(medication)
     db.flush()
@@ -267,6 +285,7 @@ def suspend_medication(db: Session, medication_id: int) -> Medication:
     medication = get_medication(db, medication_id)
     medication.status = MedicationStatus.SUSPENDED.value
     medication.suspended_at = now_local()
+    _cancel_notifications(db, [dose.id for dose in medication.doses])
     clear_upcoming_doses(db, medication)
     db.flush()
     return medication
@@ -275,7 +294,7 @@ def suspend_medication(db: Session, medication_id: int) -> Medication:
 def resume_medication(db: Session, medication_id: int) -> Medication:
     medication = get_medication(db, medication_id)
     medication.suspended_at = None
-    if medication.end_date < now_local().date():
+    if medication.end_date is not None and medication.end_date < now_local().date():
         medication.status = MedicationStatus.COMPLETED.value
         medication.completed_at = now_local()
     else:
@@ -290,6 +309,7 @@ def complete_medication(db: Session, medication_id: int) -> Medication:
     medication = get_medication(db, medication_id)
     medication.status = MedicationStatus.COMPLETED.value
     medication.completed_at = now_local()
+    _cancel_notifications(db, [dose.id for dose in medication.doses])
     clear_upcoming_doses(db, medication)
     db.flush()
     return medication
@@ -322,10 +342,24 @@ def set_dose_status(db: Session, dose_id: int, status: str) -> MedicationDose:
     dose = db.get(MedicationDose, dose_id)
     if dose is None:
         raise NotFoundError()
+    now = now_local()
     dose.status = status
-    dose.marked_at = None if status == DoseStatus.SCHEDULED.value else now_local()
+    # `marked_at` records a human decision; `status_changed_at` records any
+    # change, including the automatic one to "missed".
+    dose.marked_at = None if status == DoseStatus.SCHEDULED.value else now
+    dose.status_changed_at = now
+    if status != DoseStatus.SCHEDULED.value:
+        # Handling the dose also withdraws any reminder that was queued but not
+        # yet shown, so nothing arrives after you have already acted.
+        _cancel_notifications(db, [dose.id])
     db.flush()
     return dose
+
+
+def _cancel_notifications(db: Session, dose_ids: list[int]) -> None:
+    from app.notifications.dispatcher import cancel_pending_dose_notifications
+
+    cancel_pending_dose_notifications(db, dose_ids)
 
 
 def dose_counts(medication: Medication) -> dict[str, int]:
@@ -366,11 +400,22 @@ def serialize_medication(
         "created_at": iso(medication.created_at),
         "next_dose": serialize_dose(upcoming) if upcoming else None,
         "counts": dose_counts(medication),
-        "days_remaining": (medication.end_date - reference.date()).days,
+        "days_remaining": (
+            None
+            if medication.end_date is None
+            else (medication.end_date - reference.date()).days
+        ),
+        "open_ended": medication.end_date is None,
+        # The frontend shows the "finish early?" confirmation from this flag
+        # instead of re-deriving the rule in JavaScript.
+        "needs_complete_confirmation": requires_complete_confirmation(
+            medication, reference.date()
+        ),
         "appointments": [
             {
                 "id": appointment.id,
-                "doctor_name": appointment.doctor_name,
+                "doctor_id": appointment.doctor_id,
+                "doctor_name": appointment.doctor.name if appointment.doctor else None,
                 "scheduled_at": iso(appointment.scheduled_at),
             }
             for appointment in medication.appointments
@@ -399,4 +444,9 @@ def serialize_dose(dose: MedicationDose, medication: Medication | None = None) -
         "scheduled_at": iso(dose.scheduled_at),
         "status": dose.status,
         "marked_at": iso(dose.marked_at),
+        "status_changed_at": iso(dose.status_changed_at),
+        # From this instant onwards, "Taken" needs no confirmation. The UI
+        # compares the current clock against it; the rule itself lives in
+        # app/services/scheduling.py and is covered by the tests.
+        "confirm_taken_before": iso(taken_confirmation_threshold(dose.scheduled_at)),
     }

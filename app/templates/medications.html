@@ -22,10 +22,11 @@
     </div>
 
     <div class="form__body">
+      <p class="hint" data-i18n="medication.required_marker"></p>
       <h3 data-i18n="medication.basic_information"></h3>
 
       <div class="field">
-        <label for="med-name" data-i18n="medication.name"></label>
+        <label for="med-name"><span data-i18n="medication.name"></span> <span class="req">*</span></label>
         <input id="med-name" name="name" type="text" required maxlength="160" data-i18n-placeholder="medication.name_placeholder">
         <p class="field__error" data-error-for="name"></p>
       </div>
@@ -46,7 +47,7 @@
       <div class="field-row">
         <div class="field">
           <label for="med-dose" data-i18n="medication.dose"></label>
-          <input id="med-dose" name="dose_amount" type="text" required maxlength="40" data-i18n-placeholder="medication.dose_placeholder">
+          <input id="med-dose" name="dose_amount" type="text" maxlength="40" data-i18n-placeholder="medication.dose_placeholder">
           <p class="field__error" data-error-for="dose_amount"></p>
         </div>
         <div class="field">
@@ -58,7 +59,7 @@
       <div class="field-row">
         <div class="field">
           <label for="med-quantity" data-i18n="medication.quantity"></label>
-          <input id="med-quantity" name="quantity" type="number" min="0.25" step="0.25" value="1" required>
+          <input id="med-quantity" name="quantity" type="number" min="0.25" step="0.25">
           <p class="field__error" data-error-for="quantity"></p>
         </div>
         <div class="field">
@@ -76,20 +77,21 @@
 
       <div class="field-row">
         <div class="field">
-          <label for="med-start" data-i18n="medication.start_date"></label>
+          <label for="med-start"><span data-i18n="medication.start_date"></span> <span class="req">*</span></label>
           <input id="med-start" name="start_date" type="date" required>
           <p class="field__error" data-error-for="start_date"></p>
         </div>
         <div class="field">
           <label for="med-end" data-i18n="medication.end_date"></label>
-          <input id="med-end" name="end_date" type="date" required>
+          <input id="med-end" name="end_date" type="date">
+          <p class="hint" data-i18n="medication.end_date_optional_hint"></p>
           <p class="field__error" data-error-for="end_date"></p>
         </div>
       </div>
 
       <div class="field-row">
         <div class="field">
-          <label for="med-frequency" data-i18n="medication.frequency"></label>
+          <label for="med-frequency"><span data-i18n="medication.frequency"></span> <span class="req">*</span></label>
           <select id="med-frequency" name="frequency_hours" required></select>
           <p class="field__error" data-error-for="frequency_hours"></p>
         </div>
