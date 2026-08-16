@@ -12,6 +12,12 @@ reportlab>=4.0,<5
 # Windows desktop toasts (installed only on Windows)
 winotify>=1.1.0; sys_platform == "win32"
 
+# Desktop shell (v4): the system tray icon and the image it is drawn from.
+# Optional at run time — without them the application still runs, just without
+# a tray icon — but required to build the Windows executable.
+pystray>=0.19; sys_platform == "win32"
+pillow>=10.0; sys_platform == "win32"
+
 # Tests
 pytest>=8.0
 httpx>=0.27
