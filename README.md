@@ -64,6 +64,13 @@ run locally on Windows.
 - **Export** to CSV, JSON or PDF, and **import** a JSON export back.
 - **Light, dark or follow-the-system** appearance, and a layout that works on a
   phone.
+- A **Windows desktop application** — `Medication Organizer.exe`, one icon, a
+  tray menu, no console window — and a **Start with Windows** switch that
+  registers itself properly and can be verified.
+- A read-only **System status** page: is the scheduler running, when was the last
+  backup, is e-mail configured, is anything broken.
+- An optional **app lock**: a PIN that hides everything until it is entered, with
+  automatic locking after an idle period you choose.
 
 ## 2. Requirements
 
@@ -89,7 +96,14 @@ That creates a virtual environment in `.venv` and installs everything listed in
 
 ## 4. Running it
 
-### Normal start
+There are two ways to run MedTracker, and they are the same application:
+
+| | What it is | Best for |
+|---|---|---|
+| **From source** | `scripts\start.bat`, a console window, Python installed | developing, or if you already run it this way |
+| **`Medication Organizer.exe`** | one folder, one icon, a tray icon, no console | using it |
+
+### Normal start, from source
 
 ```bat
 scripts\start.bat
@@ -99,43 +113,80 @@ Your browser opens at <http://127.0.0.1:8000>. **A single process runs both the
 web server and the reminder system** — there is nothing else to start. Leave the
 window open (minimised is fine) for as long as you want reminders.
 
-### Start automatically when you sign in to Windows (recommended)
+### The desktop application
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install_autostart.ps1
+Build it once:
+
+```bat
+scripts\build_windows.bat
 ```
 
-This registers a Windows scheduled task named `MedTracker` that starts the
-application with no console window every time you sign in, so reminders work
-even if you never open the browser.
+That produces `dist\Medication Organizer\Medication Organizer.exe`. Copy the
+whole `Medication Organizer` folder wherever you want it to live and make a
+shortcut to the `.exe`.
 
-To start it right now without signing out again:
+Starting it gives you the same interface in your browser plus an icon in the
+notification area, with **Open**, **System status**, **Lock application** and
+**Exit**. Everything — web server, reminders, scheduler — lives in that one
+process, so *Exit* really does stop everything and closing the browser stops
+nothing.
 
-```powershell
-Start-ScheduledTask -TaskName MedTracker
-```
+> **Your data is not inside that folder.** The build folder is replaced
+> wholesale every time you rebuild, so the packaged application keeps its
+> database, backups, exports and photographs in
+> `%LOCALAPPDATA%\MedTracker\data` instead. Rebuilding, moving or deleting the
+> program folder cannot touch them. The first time you run the `.exe` on a
+> machine that has been using the source install, it copies the existing
+> database and photographs across for you and leaves the originals exactly
+> where they are.
 
-To remove it:
+If a start fails, you get a message box naming the step that failed — data
+folder, network port, web server, database or scheduler — and what to do about
+it. You never get a Python traceback.
 
-```powershell
-powershell -ExecutionPolicy Bypass -File scripts\uninstall_autostart.ps1
-```
+### Start automatically when you sign in to Windows
+
+**Settings → General → Start with Windows.** The switch writes a single value
+under `HKCU\Software\Microsoft\Windows\CurrentVersion\Run`, which is the
+same list Windows shows you in **Task Manager → Startup**, so you can always see
+it and turn it off there too. It needs no administrator rights.
+
+Upgrading to v4 does **not** turn this on by itself — an update is not consent
+to appear in your startup list. Turn it on when you want it.
+
+*Settings → System status* shows what is actually registered, which is not
+always what the switch says: if something else removed the entry, or it points
+at a copy of the program you have since deleted, that card tells you.
+
+The older `scripts\install_autostart.ps1` scheduled task still works for the
+source installation and is unchanged.
 
 ### Stopping it
 
+- Desktop application: tray icon → **Exit**.
 - Started with `start.bat`: press `Ctrl+C` in that window, or just close it.
 - Started by the scheduled task (no window): run `scripts\stop.bat`.
-- To stop it starting by itself: `scripts\uninstall_autostart.ps1`.
 
 ### From your phone, on the same network
 
-The application listens on every interface (`0.0.0.0:8000`). Find your PC's
-address with `ipconfig` and open `http://<your-pc-ip>:8000` on the phone. The
-first time, Windows will ask you to allow Python on private networks. The
+By default the application listens **only on this computer** (`127.0.0.1:8000`).
+That is deliberate: there is no login, so anything that can reach the port sees
+everything.
+
+To reach it from a phone, start it with the address to listen on:
+
+```bat
+set MEDTRACKER_HOST=0.0.0.0
+scripts\start.bat
+```
+
+Then find your PC's address with `ipconfig` and open `http://<your-pc-ip>:8000`.
+The first time, Windows will ask you to allow Python on private networks. The
 interface is responsive and works well on a phone screen.
 
-> Do not expose the port to the internet. The application has no authentication
-> because it is designed for one person on their own machine.
+> Do not expose the port to the internet, and remember that the app lock is
+> per-browser: opening it up means anyone on that network who knows the address
+> can see your record until they are asked for the PIN.
 
 ## 5. The screens
 
@@ -150,7 +201,8 @@ interface is responsive and works well on a phone screen.
 | **History** | Two tabs: the *medical timeline* — every appointment in order with its doctor, medications and follow-ups — and the medication history. |
 | **Notifications** | Everything the application has generated, read and unread. Reached from the bell. |
 | **Search** | One box over medications, doctors and appointments. Every result is a link. |
-| **Settings** | Language, appearance, the first dose time, every reminder switch, e-mail, backups, export and import. |
+| **Settings** | Three tabs. **General**: language, appearance, the first dose time, every reminder switch, e-mail, backups, export and import, and *Start with Windows*. **Security**: the optional app lock. **System status**: a read-only page saying what is and is not working. |
+| **Lock** | The only screen served while the application is locked. A PIN box and nothing else — no names, no doses, no dates. |
 
 ### Appearance
 
@@ -703,6 +755,83 @@ because cascading would silently take visit history with it.
 - Doses already marked, and anything in the past, are **never** touched.
 - Suspended and completed medications are left alone.
 
+## 10.3 The app lock
+
+*Settings → Security.* Off by default; nothing changes until you turn it on.
+
+Choose a PIN of 4 to 6 digits and the application asks for it before showing
+anything. What that means precisely:
+
+- **The PIN is never stored.** What is stored is a PBKDF2-HMAC-SHA256 hash with
+  200,000 rounds and a random salt of its own. Nothing in the database can be
+  turned back into your PIN.
+- **While locked, nothing medical is served.** Not the pages, not the API, not
+  the exports, not the photographs of your medication. The pages redirect to the
+  lock screen and the API answers `423 Locked`. The only things that still
+  answer are the lock screen itself, the health check and the stylesheet it
+  needs.
+- **It starts locked.** Closing and reopening the application is not a way past
+  it, and neither is clearing cookies.
+- **Wrong guesses cost time.** Five free attempts, then a wait that grows to five
+  minutes. The wait is stored, so restarting does not clear it.
+- **Turning it off, or changing the PIN, needs the current PIN.**
+- **Lock automatically** after 5, 15, 30 or 60 minutes of not touching it —
+  measured from what you actually do, not from the application's own background
+  polling. Or *Never*, which is the default. You can also lock it now, from
+  Settings or from the tray icon.
+
+What it is **not**: an account, a password, or encryption. Anyone with the
+database file and a SQLite viewer can still read it — that is out of scope for
+this version and stated plainly here rather than implied otherwise. The lock is
+for the case it is named after: somebody picking up your running computer.
+
+If you forget the PIN there is no recovery and no back door. Restore a backup
+taken before you turned the lock on.
+
+## 10.4 System status
+
+*Settings → System status* answers "is it actually working?" in one page, and it
+is **read-only** — it reports, it never sends a test notification, writes a
+backup or changes a setting.
+
+Nine cards, each green, amber, red or grey: the application (version, how long
+it has been up), the database (schema version, where the file is), the
+notification scheduler (last run, next run, the next dose it is waiting for),
+Windows notifications, browser notifications, e-mail notifications, backups (when
+the last one was, when the next is due, and why the last one failed if it did),
+Start with Windows, and the app lock.
+
+The colours are not decoration. Grey means *switched off on purpose*. Amber means
+*working, but there is something to know* — no backup has been taken yet, or the
+Windows startup entry points at a program that is no longer there. Red means
+*this is not working*, and the card says why in your language.
+
+## 10.5 When something goes wrong
+
+The rule this version is built around: **a failure changes nothing, says
+something you can act on, and does not take anything else down with it.**
+
+- You are never shown a Python stack trace. Errors arrive as a sentence in your
+  language; the technical detail goes to `data\logs\medtracker.log`.
+- A failed write leaves the data exactly as it was. There is no half-saved
+  medication and no partially applied edit.
+- One notification channel failing does not stop the others, one bad dose does
+  not stop the pass, and a failed pass does not stop the scheduler — the next
+  one runs a minute later.
+- A failed backup never touches the live database, and says so on the System
+  status page instead of failing quietly.
+- A refused restore or a rejected import changes nothing at all.
+- A page that cannot load offers a **Retry** button instead of going blank.
+
+### Requests from other websites are refused
+
+The application answers on `127.0.0.1` with no login, because you are the only
+user. That is also what makes it worth guarding: any web page you have open in
+another tab can send requests to it with your own browser. So anything that
+changes data must come from the application itself, and a `Host` header naming a
+site we have never heard of is refused outright. You will never notice this; a
+web page trying to empty your database will.
+
 ## 11. Running the tests
 
 ```bat
@@ -760,6 +889,9 @@ C:\ProyectoPersonal
 │   ├── routes/
 │   │   ├── api.py              JSON API
 │   │   ├── pages.py            HTML pages
+│   │   ├── lock.py             the app lock, enforced in one middleware
+│   │   ├── lock_cache.py       so that check costs nothing when unused
+│   │   ├── origin.py           refuses requests other websites make for you
 │   │   └── deps.py             language resolution
 │   ├── services/
 │   │   ├── scheduling.py       dose calculation (the core logic)
@@ -775,7 +907,15 @@ C:\ProyectoPersonal
 │   │   ├── export_service.py   CSV, JSON and PDF export
 │   │   ├── import_service.py   JSON import (full replace)
 │   │   ├── textformat.py       server-side date and dose formatting
+│   │   ├── applock.py          the PIN: hashing, attempts, auto-lock
+│   │   ├── system_status.py    the read-only diagnostic page
 │   │   └── errors.py           domain errors
+│   ├── desktop/
+│   │   ├── __main__.py         `Medication Organizer.exe` — argument handling
+│   │   ├── launcher.py         the start sequence, step by step
+│   │   ├── startup.py          the Windows "Run" registry entry
+│   │   ├── tray.py             the notification-area icon
+│   │   └── messages.py         what a failed start says, before the UI exists
 │   ├── notifications/
 │   │   ├── scheduler.py        APScheduler thread
 │   │   ├── dispatcher.py       what is due and how it is announced
@@ -786,9 +926,14 @@ C:\ProyectoPersonal
 │   ├── static/css|js|img|uploads
 │   └── utils/
 │       ├── timeutil.py         local time
+│       ├── datamove.py         bringing existing data forward, once
 │       └── secretstore.py      DPAPI-protected SMTP password
-├── data/                       medtracker.db, logs, backups/ and exports/ (created automatically)
-├── scripts/                    install / start / stop / autostart / tests
+├── data/                       medtracker.db, logs/, backups/, exports/, uploads/
+│                               (created automatically; %LOCALAPPDATA%\MedTracker\data
+│                                when running the packaged .exe)
+├── desktop.py                  entry point for the packaged application
+├── medtracker.spec             PyInstaller recipe
+├── scripts/                    install / start / stop / autostart / build / tests
 ├── tests/
 ├── requirements.txt
 └── README.md
@@ -807,8 +952,14 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
   channel with everything closed is the Windows one. Web Push is not used
   because it would need an external service, which is out of proportion for a
   local application.
-- No authentication and no encryption: designed for a single user on their own
-  machine.
+- No accounts and no encryption. The optional app lock (section 10.3) stops
+  somebody picking up your running computer; it does not protect the database
+  file itself, which anyone with a SQLite viewer can still read.
+- The lock is a single lock on a single running application, remembered in
+  memory and tied to the browser that entered the PIN. Closing the application
+  locks it again, always.
+- The app lock has no recovery. Forget the PIN and the way back is a backup
+  taken before you turned it on.
 - No sync between devices. Backups are automatic but local: they land on the
   same machine, so a disk failure takes both with it unless you point the backup
   folder at a drive or a synced folder somewhere else.
@@ -835,9 +986,12 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
   to another machine or user means retyping it — see section 6.
 - A doctor with appointments cannot be deleted. Delete or move the appointments
   first; this is deliberate, not a missing feature.
-- Pictures are stored in `app/static/uploads`; the database backup does not
-  include them, so copy that folder too if you care about them. The same is true
-  of an export: it carries the picture's file name, not the picture.
+- Pictures are stored in `data\uploads` (they moved there in v4, out of
+  `app/static/uploads`, so that the app lock covers them and a reinstall cannot
+  delete them; the old folder is copied across automatically and left alone).
+  The database backup still does not include them, so copy that folder too if
+  you care about them. The same is true of an export: it carries the picture's
+  file name, not the picture.
 - An import **replaces** everything; it never merges. This is deliberate (see
   section 10.2), but it does mean an import is not a way to combine two machines.
 - Editing a treatment's start date backwards does not create the doses for the
@@ -858,6 +1012,15 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
 - Windows alerts come from the Python process, so they appear under the
   "MedTracker" application name without a custom icon in the notification
   centre.
+- The packaged `.exe`, the tray icon and the Windows startup entry can only be
+  built and exercised on Windows. They are covered by tests wherever the logic
+  is testable off Windows — the start sequence, the port check, the registry
+  command line, the failure messages — but the executable itself was not run
+  during development, which happened on Linux.
+- Two copies cannot run at once, by design: a second launch finds the first and
+  opens its window instead of starting a second scheduler. If the port is taken
+  by something that is *not* MedTracker, the application refuses to start and
+  says so rather than starting half of itself.
 
 ## 14. Troubleshooting
 
@@ -865,7 +1028,11 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
 |---|---|
 | `scripts\start.bat` says the environment is missing | Run `scripts\install.bat` first. |
 | "Python was not found" | Reinstall Python with *Add python.exe to PATH* ticked. |
-| Port 8000 is already in use | Another instance is still alive: run `scripts\stop.bat`. Or change the port with `set MEDTRACKER_PORT=8010` before starting. |
+| Port 8000 is already in use | Another instance is still alive: run `scripts\stop.bat`. Or change the port with `set MEDTRACKER_PORT=8010` before starting. The desktop application says so in its message box rather than starting halfway. |
+| You forgot the PIN | There is no recovery. Restore a backup from before you turned the lock on (*Settings → Backup*), or delete `data\medtracker.db` if you are willing to lose everything. |
+| It locks while you are using it | *Settings → Security → Lock automatically* is set too short, or the browser tab was left open without being touched. Set it to *Never* if you do not want it. |
+| The app does not start with Windows although the switch is on | *Settings → System status* → the **Start with Windows** card says whether the entry exists and whether it still points at a program that is there. Turning the switch off and on again rewrites it. |
+| The phone cannot reach it | v4 listens only on this computer by default. See "From your phone, on the same network" in section 4. |
 | No Windows toasts | Check Focus assist, check that the option is on in Settings, and try the test notification button. |
 | The browser does not notify | The permission is blocked: fix it in the browser's site settings. |
 | Settings says the scheduler is stopped | The page is open but the process died; start it again. |

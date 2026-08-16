@@ -7,7 +7,9 @@ data/
 *.db-wal
 *.db-shm
 
-# Uploaded medication pictures (personal data, kept out of the repo)
+# Uploaded medication pictures (personal data, kept out of the repo).
+# They live in data/ since v4; the old location stays ignored so that an
+# installation upgrading from v3 does not commit the copies on its way out.
 app/static/uploads/*
 !app/static/uploads/.gitkeep
 
@@ -18,6 +20,13 @@ __pycache__/
 
 # Transfer folder used to copy the project onto this machine
 _setup/
+
+# Anything staged for deletion by hand (never part of the repo)
+_to_delete/
+
+# PyInstaller (v4)
+build/
+dist/
 
 # Editors / OS
 .vscode/
