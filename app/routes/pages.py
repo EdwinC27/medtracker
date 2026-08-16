@@ -49,6 +49,21 @@ def medication_detail_page(
     )
 
 
+@router.get("/calendar", response_class=HTMLResponse)
+def calendar_page(request: Request, language: str = Depends(get_language)):
+    return _render(request, "calendar.html", language, page="calendar")
+
+
+@router.get("/search", response_class=HTMLResponse)
+def search_page(request: Request, language: str = Depends(get_language)):
+    return _render(request, "search.html", language, page="search")
+
+
+@router.get("/notifications", response_class=HTMLResponse)
+def notifications_page(request: Request, language: str = Depends(get_language)):
+    return _render(request, "notification_center.html", language, page="notifications")
+
+
 @router.get("/doctors", response_class=HTMLResponse)
 def doctors_page(request: Request, language: str = Depends(get_language)):
     return _render(request, "doctors.html", language, page="doctors")

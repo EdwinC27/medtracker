@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.config import (
     ALLOWED_IMAGE_EXTENSIONS,
     APP_VERSION,
+    CALENDAR_VIEWS,
     DOSE_NOTIFICATION_OFFSETS,
     FORM_OPTIONS,
     FREQUENCY_OPTIONS,
@@ -39,7 +40,7 @@ from app.routes.deps import get_language
 from app.services import appointments as appointment_service
 from app.services import doctors as doctor_service
 from app.services import medications as medication_service
-from app.services.dashboard import build_dashboard
+from app.services.today import build_today
 from app.services.errors import NotFoundError, ValidationError
 from app.services.settings_service import (
     count_active_medications,
@@ -84,9 +85,72 @@ def catalog(language: str):
 # --------------------------------------------------------------------------- #
 # Dashboard
 # --------------------------------------------------------------------------- #
+@router.get("/today")
+def today(db: Session = Depends(get_db)):
+    """Everything the home screen needs: doses, appointments, what is next."""
+    return build_today(db)
+
+
 @router.get("/dashboard")
 def dashboard(db: Session = Depends(get_db)):
-    return build_dashboard(db)
+    """Kept so nothing that pointed at the v2 endpoint breaks."""
+    return build_today(db)
+
+
+# --------------------------------------------------------------------------- #
+# Calendar
+# --------------------------------------------------------------------------- #
+@router.get("/calendar")
+def calendar(
+    view: str = "month",
+    anchor: str | None = None,
+    scope: str = "all",
+    medication_id: int | None = None,
+    doctor_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    """Events for the visible range only - never the whole history."""
+    from app.services.calendar_service import build_calendar, parse_anchor, range_for
+    from app.utils.timeutil import now_local
+
+    view = view if view in CALENDAR_VIEWS else "month"
+    day = parse_anchor(anchor, now_local())
+    start, end = range_for(view, day)
+    payload = build_calendar(db, start, end, scope, medication_id, doctor_id)
+    payload["view"] = view
+    payload["anchor"] = day.isoformat()
+    return payload
+
+
+# --------------------------------------------------------------------------- #
+# Medical timeline
+# --------------------------------------------------------------------------- #
+@router.get("/timeline")
+def timeline(
+    order: str = "newest",
+    scope: str = "all",
+    doctor_id: int | None = None,
+    medication_id: int | None = None,
+    limit: int = 100,
+    offset: int = 0,
+    kind: str = "all",
+    db: Session = Depends(get_db),
+):
+    from app.services.timeline import build_timeline
+
+    return build_timeline(
+        db, order, scope, doctor_id, medication_id, limit, offset, kind
+    )
+
+
+# --------------------------------------------------------------------------- #
+# Search (read-only)
+# --------------------------------------------------------------------------- #
+@router.get("/search")
+def search_everything(q: str = "", db: Session = Depends(get_db)):
+    from app.services.search import search
+
+    return search(db, q)
 
 
 # --------------------------------------------------------------------------- #
@@ -162,6 +226,20 @@ def complete_medication(medication_id: int, db: Session = Depends(get_db)):
 async def set_dose_status(dose_id: int, request: Request, db: Session = Depends(get_db)):
     body = await request.json()
     dose = medication_service.set_dose_status(db, dose_id, body.get("status", ""))
+    db.commit()
+    db.refresh(dose)
+    return medication_service.serialize_dose(dose)
+
+
+@router.post("/doses/{dose_id}/snooze")
+async def snooze_dose(dose_id: int, request: Request, db: Session = Depends(get_db)):
+    """Push the reminder back without moving the dose itself."""
+    body = await request.json()
+    try:
+        minutes = int(body.get("minutes", 0))
+    except (TypeError, ValueError):
+        raise ValidationError({"minutes": "validation.snooze_invalid"}) from None
+    dose = medication_service.snooze_dose(db, dose_id, minutes)
     db.commit()
     db.refresh(dose)
     return medication_service.serialize_dose(dose)
@@ -392,6 +470,158 @@ def notifications_test_email(
 def notifications_run_now(db: Session = Depends(get_db)):
     """Force one scheduler pass (useful for testing reminders)."""
     return run_tick(db)
+
+
+# --------------------------------------------------------------------------- #
+# Notification centre
+# --------------------------------------------------------------------------- #
+@router.get("/notifications/history")
+def notifications_history(
+    unread_only: bool = False,
+    limit: int = 50,
+    offset: int = 0,
+    db: Session = Depends(get_db),
+    language: str = Depends(get_language),
+):
+    from app.notifications.dispatcher import notification_history
+
+    return notification_history(db, language, unread_only, min(max(limit, 1), 200), max(offset, 0))
+
+
+@router.get("/notifications/unread-count")
+def notifications_unread(db: Session = Depends(get_db)):
+    from app.notifications.dispatcher import unread_count
+
+    return {"unread": unread_count(db)}
+
+
+@router.post("/notifications/read")
+async def notifications_read(request: Request, db: Session = Depends(get_db)):
+    """Mark the given notifications read, or all of them when ids is omitted."""
+    from app.notifications.dispatcher import mark_read, unread_count
+
+    body = await request.json()
+    ids = body.get("ids")
+    count = mark_read(db, [int(i) for i in ids] if ids else None)
+    db.commit()
+    return {"ok": True, "marked": count, "unread": unread_count(db)}
+
+
+# --------------------------------------------------------------------------- #
+# Backups
+# --------------------------------------------------------------------------- #
+@router.get("/backups")
+def backups(db: Session = Depends(get_db)):
+    from app.services.backup import status as backup_status
+
+    return backup_status(get_settings(db))
+
+
+@router.post("/backups")
+def create_backup_now(db: Session = Depends(get_db)):
+    from app.services.backup import MANUAL, create_backup, prune_backups
+
+    settings = get_settings(db)
+    backup = create_backup(settings, MANUAL)
+    settings.last_backup_at = backup.created_at
+    prune_backups(settings)
+    db.commit()
+    return {"ok": True, "backup": backup.to_dict(), "message": "message.backup_created"}
+
+
+@router.post("/backups/restore")
+async def restore_backup_route(request: Request, db: Session = Depends(get_db)):
+    """Replace the live database with a backup, after copying the current one."""
+    from app.services.backup import restore_backup
+
+    body = await request.json()
+    name = (body.get("name") or "").strip()
+    if not name:
+        raise ValidationError({"backup": "validation.backup_not_found"})
+    result = restore_backup(db, name)
+    return {"ok": True, **result, "message": "message.backup_restored"}
+
+
+@router.delete("/backups/{name}")
+def delete_backup(name: str, db: Session = Depends(get_db)):
+    from app.services.backup import find_backup
+
+    settings = get_settings(db)
+    target = find_backup(settings, name)
+    target.path.unlink()
+    return {"ok": True, "message": "message.backup_deleted"}
+
+
+# --------------------------------------------------------------------------- #
+# Export / import
+# --------------------------------------------------------------------------- #
+@router.post("/export")
+async def export_data(
+    request: Request, db: Session = Depends(get_db), language: str = Depends(get_language)
+):
+    """Generate a file and hand back a one-shot download link."""
+    from app.services.export_service import cleanup_exports, export
+
+    body = await request.json()
+    cleanup_exports()
+    path = export(db, (body.get("format") or "json").lower(), body.get("datasets"), language)
+    return {
+        "ok": True,
+        "file": path.name,
+        "size": path.stat().st_size,
+        "download_url": f"/api/export/{path.name}",
+    }
+
+
+@router.get("/export/{name}")
+def download_export(name: str):
+    from fastapi.responses import FileResponse
+
+    from app.config import EXPORT_DIR
+
+    candidate = (EXPORT_DIR / Path(name).name).resolve()
+    if candidate.parent != EXPORT_DIR.resolve() or not candidate.is_file():
+        raise NotFoundError()
+    media = {
+        ".json": "application/json",
+        ".csv": "text/csv; charset=utf-8",
+        ".pdf": "application/pdf",
+        ".zip": "application/zip",
+    }.get(candidate.suffix, "application/octet-stream")
+    return FileResponse(candidate, media_type=media, filename=candidate.name)
+
+
+@router.post("/import/preview")
+async def import_preview(file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Validate the file and describe what it would replace. Changes nothing."""
+    from app.services.import_service import parse_payload, preview
+
+    payload = parse_payload(await file.read())
+    return {"ok": True, "preview": preview(db, payload)}
+
+
+@router.post("/import")
+async def import_data(
+    file: UploadFile = File(...),
+    include_settings: bool = False,
+    db: Session = Depends(get_db),
+):
+    """Replace the database contents with the file, after a safety backup."""
+    from app.services.backup import PRE_IMPORT, create_backup
+    from app.services.import_service import apply_import, parse_payload
+
+    payload = parse_payload(await file.read())
+    settings = get_settings(db)
+    safety = create_backup(settings, PRE_IMPORT)
+
+    result = apply_import(db, payload, include_settings)
+    db.commit()
+    return {
+        "ok": True,
+        "imported": result,
+        "safety_backup": safety.to_dict(),
+        "message": "message.import_done",
+    }
 
 
 @router.get("/system/status")
