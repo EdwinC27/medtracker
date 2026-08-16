@@ -16,6 +16,33 @@ from app.services.scheduling import (
 from app.utils.timeutil import now_local
 
 
+def last_medication(db):
+    """The most recently created medication, for tests that do not keep it."""
+    from app.models.models import Medication
+
+    return db.query(Medication).order_by(Medication.id.desc()).first()
+
+
+def register_before_start(db, medication):
+    """Pretend the medication was added to the application before it began.
+
+    Most tests predate the "before registration" rule and assume that every
+    generated dose is pending, which is only true when the medication was
+    registered before its first dose was due. Backdating the registration says
+    that explicitly instead of leaving it to what time the suite runs at.
+    """
+    from app.utils.timeutil import combine
+
+    medication.created_at = (
+        combine(medication.start_date, medication.first_dose_time) - timedelta(days=1)
+    )
+    for dose in medication.doses:
+        if dose.status == DoseStatus.BEFORE_REGISTRATION.value:
+            dose.status = DoseStatus.SCHEDULED.value
+    db.flush()
+    return medication
+
+
 def make_payload(**overrides):
     today = now_local().date()
     payload = {
@@ -39,6 +66,14 @@ def test_create_generates_the_whole_schedule(db):
     assert medication.status == MedicationStatus.ACTIVE.value
     assert len(medication.doses) == 29  # 10 days, every 8h from 10:00
     assert medication.doses[0].scheduled_at.time() == time(10, 0)
+    # Nothing is marked at creation. A dose that was already due when the
+    # medication was entered is recorded as history (see
+    # tests/test_before_registration.py); everything else is pending.
+    assert all(
+        dose.status in (DoseStatus.SCHEDULED.value, DoseStatus.BEFORE_REGISTRATION.value)
+        for dose in medication.doses
+    )
+    register_before_start(db, medication)
     assert all(dose.status == DoseStatus.SCHEDULED.value for dose in medication.doses)
 
 
@@ -164,6 +199,7 @@ def test_unmarked_doses_become_missed_after_the_grace_period(db):
             end_date=(today + timedelta(days=2)).isoformat(),
         ),
     )
+    register_before_start(db, medication)
     changed = mark_overdue_doses_as_missed(db, grace_minutes=120)
     assert changed > 0
     assert all(

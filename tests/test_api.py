@@ -89,7 +89,12 @@ def test_unknown_medication_returns_a_clean_404(client):
 
 
 def test_dose_can_be_marked_and_unmarked(client):
-    medication = client.post("/api/medications", json=payload()).json()
+    # A treatment that starts tomorrow, so its first dose is one the
+    # application will remind about rather than one that predates it.
+    tomorrow = (now_local().date() + timedelta(days=1)).isoformat()
+    medication = client.post(
+        "/api/medications", json=payload(start_date=tomorrow)
+    ).json()
     dose_id = medication["doses"][0]["id"]
 
     assert client.post(f"/api/doses/{dose_id}/status", json={"status": "taken"}).json()["status"] == "taken"

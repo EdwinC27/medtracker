@@ -153,9 +153,51 @@ def test_nothing_is_lost(v1_db):
 
 
 def test_dose_history_and_statuses_survive(v1_db):
+    """Everything the user decided is kept exactly; only the statuses the
+    application itself had chosen for doses that predate the medication's own
+    registration are corrected (the v3 -> v4 step).
+
+    In this fixture every dose is dated before its medication's `created_at`,
+    so: `taken` and `skipped` are the user's and stay, while the automatic
+    `missed` and the never-swept `scheduled` become `before_registration`.
+    """
     before = read(v1_db, "SELECT id, status, marked_at FROM medication_doses ORDER BY id")
+    assert [row[1] for row in before] == ["taken", "missed", "skipped", "scheduled"]
+
     run_migrations(v1_db)
-    assert read(v1_db, "SELECT id, status, marked_at FROM medication_doses ORDER BY id") == before
+
+    after = read(v1_db, "SELECT id, status, marked_at FROM medication_doses ORDER BY id")
+    assert [row[1] for row in after] == [
+        "taken", "before_registration", "skipped", "before_registration"
+    ]
+    # Ids and the user's own timestamps are untouched.
+    assert [row[0] for row in after] == [row[0] for row in before]
+    assert [row[2] for row in after] == [row[2] for row in before]
+
+
+def test_a_dose_the_user_marked_is_never_reclassified(v1_db):
+    """The discriminator is `marked_at`: a status the user chose stays."""
+    run_migrations(v1_db)
+    rows = read(
+        v1_db,
+        "SELECT status FROM medication_doses WHERE marked_at IS NOT NULL ORDER BY id",
+    )
+    assert [row[0] for row in rows] == ["taken", "skipped"]
+
+
+def test_a_dose_after_its_medication_was_registered_keeps_its_status(v1_db):
+    """Only the past is reclassified. A dose that came due after the medication
+    existed is an ordinary dose and keeps whatever it was."""
+    con = sqlite3.connect(str(v1_db))
+    con.execute(
+        "INSERT INTO medication_doses VALUES (99,1,'2026-08-20 10:00:00','scheduled',NULL,NULL)"
+    )
+    con.commit()
+    con.close()
+
+    run_migrations(v1_db)
+
+    assert read(v1_db, "SELECT status FROM medication_doses WHERE id = 99")[0][0] == "scheduled"
 
 
 def test_the_doctor_name_becomes_a_doctor_record(v1_db):
@@ -234,7 +276,7 @@ def test_the_database_is_left_consistent(v1_db):
 
 def test_running_it_twice_changes_nothing(v1_db):
     first = run_migrations(v1_db)
-    assert first["applied"] == ["1->2"]
+    assert first["applied"] == ["1->2", "2->3", "3->4", "4->5"]
 
     snapshot = read(v1_db, "SELECT id, status FROM medication_doses ORDER BY id")
     second = run_migrations(v1_db)

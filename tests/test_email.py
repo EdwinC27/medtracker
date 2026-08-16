@@ -20,7 +20,11 @@ from app.services.settings_service import get_settings, update_settings
 from app.utils import secretstore
 from app.utils.timeutil import now_local
 from tests.test_appointments import make_appointment
-from tests.test_medications import make_payload
+from tests.test_medications import (
+    last_medication,
+    make_payload,
+    register_before_start,
+)
 
 SMTP_SETTINGS = {
     "email_recipient": "edwin@example.com",
@@ -190,6 +194,10 @@ def test_nothing_is_sent_while_the_channel_is_off(db, smtp):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
 
     summary = dispatcher.run_tick(db, send_windows=False)
@@ -210,6 +218,10 @@ def test_a_dose_reminder_is_emailed_when_the_channel_is_on(db, smtp):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
 
     summary = dispatcher.run_tick(db, send_windows=False)
@@ -252,6 +264,7 @@ def _dose_notification(kind="at_time"):
                 "quantity": 1,
                 "form": "capsule",
                 "scheduled_at": datetime(2026, 8, 20, 10, 0).isoformat(),
+                "dose_number": 1,
             }
         ),
     )
@@ -260,26 +273,34 @@ def _dose_notification(kind="at_time"):
 def test_the_english_email_follows_the_requested_shape(db):
     subject, body = dispatcher.render_email(_dose_notification(), "en")
 
-    assert subject == "Medication reminder: Amoxicillin"
-    assert "Medication reminder" in body
-    assert "It's time to take:" in body
+    assert subject == "🔔 Amoxicillin — Dose #1 — time to take it"
+    assert "Time for your medication" in body
+    assert "The dose scheduled for right now is:" in body
     assert "Amoxicillin" in body
     assert "Dose:" in body
     assert "500 mg — 1 capsule" in body
     assert "Scheduled time:" in body
     assert "10:00 AM" in body
+    assert "Date:" in body
+    assert "August 20, 2026" in body
+    assert "Status:" in body and "Pending" in body
+    assert body.endswith("--\nPersonal reminder tool — not medical advice.")
 
 
 def test_the_spanish_email_follows_the_requested_shape(db):
     subject, body = dispatcher.render_email(_dose_notification(), "es")
 
-    assert subject == "Recordatorio de medicamento: Amoxicillin"
-    assert "Recordatorio de medicamento" in body
-    assert "Es hora de tomar:" in body
+    assert subject == "🔔 Amoxicillin — Toma #1 — es hora de tomarla"
+    assert "Es hora de tu medicamento" in body
+    assert "La dosis programada para este momento es:" in body
     assert "Dosis:" in body
     assert "500 mg — 1 cápsula" in body
     assert "Hora programada:" in body
     assert "10:00" in body
+    assert "Fecha:" in body
+    assert "20 de agosto de 2026" in body
+    assert "Estado:" in body and "Pendiente" in body
+    assert body.endswith("--\nHerramienta personal de recordatorios — no es consejo médico.")
 
 
 def test_the_email_language_follows_the_saved_preference(db, smtp):
@@ -296,11 +317,18 @@ def test_the_email_language_follows_the_saved_preference(db, smtp):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
     dispatcher.run_tick(db, send_windows=False)
 
     assert smtp.sent
-    assert smtp.sent[0]["Subject"].startswith("Recordatorio de medicamento")
+    # Whatever the first reminder of the dose happens to be, it is in Spanish
+    # and it names the dose it belongs to.
+    assert "Toma #" in smtp.sent[0]["Subject"]
+    assert "minutos" in smtp.sent[0]["Subject"] or "tomarla" in smtp.sent[0]["Subject"]
 
 
 def test_every_offset_produces_its_own_wording(db):
@@ -308,9 +336,9 @@ def test_every_offset_produces_its_own_wording(db):
         ("before_30", "In 30 minutes"),
         ("before_15", "In 15 minutes"),
         ("before_5", "In 5 minutes"),
-        ("at_time", "It's time to take"),
-        ("after_15", "15 minutes ago"),
-        ("after_30", "30 minutes ago"),
+        ("at_time", "The dose scheduled for right now"),
+        ("after_15", "has not been marked as taken or skipped yet"),
+        ("after_30", "has not been marked as taken or skipped yet"),
         ("overdue", "now overdue"),
     ):
         _subject, body = dispatcher.render_email(_dose_notification(kind), "en")
@@ -360,6 +388,10 @@ def test_a_broken_hostname_cannot_take_the_scheduler_down(db, monkeypatch):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
 
     summary = dispatcher.run_tick(db, send_windows=False)   # must not raise

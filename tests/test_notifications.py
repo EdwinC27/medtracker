@@ -16,7 +16,11 @@ from app.services import medications as medication_service
 from app.services.settings_service import get_settings
 from app.utils.timeutil import now_local
 from tests.test_appointments import make_appointment
-from tests.test_medications import make_payload
+from tests.test_medications import (
+    last_medication,
+    make_payload,
+    register_before_start,
+)
 
 
 def test_tick_queues_a_notification_for_a_due_dose(db):
@@ -29,6 +33,9 @@ def test_tick_queues_a_notification_for_a_due_dose(db):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
 
     summary = run_tick(db, send_windows=False)
@@ -49,6 +56,10 @@ def test_a_dose_is_never_notified_twice(db):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
 
     first = run_tick(db, send_windows=False)["dose_notifications"]
@@ -68,6 +79,9 @@ def test_suspended_medications_do_not_notify(db):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     medication_service.suspend_medication(db, medication.id)
     for dose in medication.doses:
         dose.notified_at = None
@@ -86,6 +100,10 @@ def test_reminders_can_be_disabled_globally(db):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     settings = get_settings(db)
     settings.medication_reminders = False
     db.commit()
@@ -127,6 +145,10 @@ def test_notification_text_is_rendered_in_both_languages(db):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
     run_tick(db, send_windows=False)
 
@@ -153,6 +175,10 @@ def test_browser_queue_is_emptied_once_delivered(db):
             first_dose_time=(now_local() - timedelta(minutes=5)).strftime("%H:%M"),
         ),
     )
+    medication = last_medication(db)
+    # Registered the day before it started, so its doses are ones the
+    # application was in a position to remind about.
+    register_before_start(db, medication)
     db.commit()
     run_tick(db, send_windows=False)
 
@@ -232,6 +258,9 @@ def test_tick_also_marks_missed_doses_and_completes_treatments(db):
         ),
     )
     medication.status = "active"
+    # Registered before it started, so these really were doses the application
+    # asked about and the user left unmarked.
+    register_before_start(db, medication)
     db.commit()
 
     summary = run_tick(db, send_windows=False)
