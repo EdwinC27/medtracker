@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session, selectinload
 from app.models.models import (
     Appointment,
     AppointmentReminder,
+    Doctor,
     Medication,
     ReminderKind,
 )
@@ -31,10 +32,18 @@ REMINDER_FIELDS = {
 }
 
 
-def list_appointments(db: Session, scope: str | None = None) -> list[Appointment]:
+def list_appointments(
+    db: Session, scope: str | None = None, doctor_id: int | None = None
+) -> list[Appointment]:
     stmt = select(Appointment).options(
-        selectinload(Appointment.medications), selectinload(Appointment.reminders)
+        selectinload(Appointment.medications),
+        selectinload(Appointment.reminders),
+        selectinload(Appointment.doctor),
+        selectinload(Appointment.follow_up_of),
+        selectinload(Appointment.follow_ups),
     )
+    if doctor_id:
+        stmt = stmt.where(Appointment.doctor_id == doctor_id)
     now = now_local()
     if scope == "upcoming":
         stmt = stmt.where(Appointment.scheduled_at >= now).order_by(Appointment.scheduled_at)
@@ -56,21 +65,31 @@ def next_appointment(db: Session, reference: datetime | None = None) -> Appointm
     reference = reference or now_local()
     return db.execute(
         select(Appointment)
-        .options(selectinload(Appointment.medications))
+        .options(selectinload(Appointment.medications), selectinload(Appointment.doctor))
         .where(Appointment.scheduled_at >= reference)
         .order_by(Appointment.scheduled_at)
         .limit(1)
     ).scalars().first()
 
 
-def _validate(data: dict) -> dict:
+def _validate(db: Session, data: dict, current: Appointment | None = None) -> dict:
     fields: dict[str, str] = {}
     clean: dict = {}
 
-    doctor = (data.get("doctor_name") or "").strip()
-    if not doctor:
-        fields["doctor_name"] = "validation.doctor_required"
-    clean["doctor_name"] = doctor[:160]
+    # --- doctor: a real reference, not a copied name --------------------
+    raw_doctor = data.get("doctor_id")
+    doctor_id = None
+    if raw_doctor in (None, "", "null"):
+        fields["doctor_id"] = "validation.doctor_required"
+    else:
+        try:
+            doctor_id = int(raw_doctor)
+        except (TypeError, ValueError):
+            fields["doctor_id"] = "validation.doctor_required"
+        else:
+            if db.get(Doctor, doctor_id) is None:
+                fields["doctor_id"] = "validation.doctor_not_found"
+    clean["doctor_id"] = doctor_id
 
     raw = data.get("scheduled_at")
     if not raw and data.get("date"):
@@ -94,9 +113,60 @@ def _validate(data: dict) -> dict:
     clean["treatment"] = (data.get("treatment") or "").strip()[:300] or None
     clean["notes"] = (data.get("notes") or "").strip()[:4000] or None
 
+    # --- follow-up of an earlier appointment ----------------------------
+    raw_follow_up = data.get("follow_up_of_id")
+    follow_up_id = None
+    if raw_follow_up not in (None, "", "null", 0, "0"):
+        try:
+            follow_up_id = int(raw_follow_up)
+        except (TypeError, ValueError):
+            fields["follow_up_of_id"] = "validation.follow_up_invalid"
+        else:
+            previous = db.get(Appointment, follow_up_id)
+            if previous is None:
+                fields["follow_up_of_id"] = "validation.follow_up_invalid"
+            elif current is not None and previous.id == current.id:
+                fields["follow_up_of_id"] = "validation.follow_up_self"
+            elif (
+                scheduled_at is not None
+                and previous.scheduled_at >= scheduled_at
+            ):
+                # Only a genuinely earlier visit can be followed up on.
+                fields["follow_up_of_id"] = "validation.follow_up_not_earlier"
+    clean["follow_up_of_id"] = follow_up_id
+
+    # Moving an appointment earlier could leave a visit that follows up on it
+    # sitting *before* it, which would allow an A -> B -> A cycle. The whole
+    # chain around this appointment is therefore rechecked on every save.
+    if current is not None and scheduled_at is not None:
+        later = [
+            item for item in current.follow_ups if item.scheduled_at <= scheduled_at
+        ]
+        if later:
+            fields["scheduled_at"] = "validation.follow_up_would_invert"
+
     if fields:
         raise ValidationError(fields)
     return clean
+
+
+def eligible_follow_up_targets(
+    db: Session, before: datetime, exclude_id: int | None = None
+) -> list[Appointment]:
+    """Appointments that may be chosen as "this is a follow-up of ...".
+
+    Only visits scheduled strictly earlier than the new one qualify, so a
+    future appointment can never be picked as the previous one.
+    """
+    stmt = (
+        select(Appointment)
+        .options(selectinload(Appointment.doctor))
+        .where(Appointment.scheduled_at < before)
+        .order_by(Appointment.scheduled_at.desc())
+    )
+    if exclude_id:
+        stmt = stmt.where(Appointment.id != exclude_id)
+    return list(db.execute(stmt).scalars().all())
 
 
 def _as_bool(value, default: bool) -> bool:
@@ -108,15 +178,16 @@ def _as_bool(value, default: bool) -> bool:
 
 
 def create_appointment(db: Session, data: dict) -> Appointment:
-    clean = _validate(data)
+    clean = _validate(db, data)
     settings = get_settings(db)
     appointment = Appointment(
-        doctor_name=clean["doctor_name"],
+        doctor_id=clean["doctor_id"],
         scheduled_at=clean["scheduled_at"],
         location=clean["location"],
         treatment=clean["treatment"],
         notes=clean["notes"],
         next_appointment_at=clean["next_appointment_at"],
+        follow_up_of_id=clean["follow_up_of_id"],
         reminder_days_3=_as_bool(data.get("reminder_days_3"), settings.appt_reminder_days_3),
         reminder_day_1=_as_bool(data.get("reminder_day_1"), settings.appt_reminder_day_1),
         reminder_hours_3=_as_bool(data.get("reminder_hours_3"), settings.appt_reminder_hours_3),
@@ -131,14 +202,15 @@ def create_appointment(db: Session, data: dict) -> Appointment:
 
 def update_appointment(db: Session, appointment_id: int, data: dict) -> Appointment:
     appointment = get_appointment(db, appointment_id)
-    clean = _validate(data)
+    clean = _validate(db, data, current=appointment)
 
-    appointment.doctor_name = clean["doctor_name"]
+    appointment.doctor_id = clean["doctor_id"]
     appointment.scheduled_at = clean["scheduled_at"]
     appointment.location = clean["location"]
     appointment.treatment = clean["treatment"]
     appointment.notes = clean["notes"]
     appointment.next_appointment_at = clean["next_appointment_at"]
+    appointment.follow_up_of_id = clean["follow_up_of_id"]
     appointment.reminder_days_3 = _as_bool(data.get("reminder_days_3"), appointment.reminder_days_3)
     appointment.reminder_day_1 = _as_bool(data.get("reminder_day_1"), appointment.reminder_day_1)
     appointment.reminder_hours_3 = _as_bool(data.get("reminder_hours_3"), appointment.reminder_hours_3)
@@ -154,6 +226,11 @@ def update_appointment(db: Session, appointment_id: int, data: dict) -> Appointm
 def delete_appointment(db: Session, appointment_id: int) -> None:
     appointment = get_appointment(db, appointment_id)
     appointment.medications.clear()
+    # Later visits that pointed at this one simply stop being follow-ups; they
+    # are never deleted along with it.
+    for follow_up in list(appointment.follow_ups):
+        follow_up.follow_up_of_id = None
+    db.flush()
     db.delete(appointment)
     db.flush()
 
@@ -199,10 +276,24 @@ def _sync_medication_links(db: Session, appointment: Appointment, medication_ids
     appointment.medications = medications
 
 
+def _brief(appointment: Appointment | None) -> dict | None:
+    """Just enough of an appointment to render a link to it."""
+    if appointment is None:
+        return None
+    return {
+        "id": appointment.id,
+        "doctor_name": appointment.doctor.name if appointment.doctor else None,
+        "scheduled_at": iso(appointment.scheduled_at),
+    }
+
+
 def serialize_appointment(appointment: Appointment, *, include_details: bool = True) -> dict:
     data = {
         "id": appointment.id,
-        "doctor_name": appointment.doctor_name,
+        "doctor_id": appointment.doctor_id,
+        "doctor_name": appointment.doctor.name if appointment.doctor else None,
+        "doctor_occupation": appointment.doctor.occupation if appointment.doctor else None,
+        "doctor_phone": appointment.doctor.phone if appointment.doctor else None,
         "scheduled_at": iso(appointment.scheduled_at),
         "location": appointment.location,
         "treatment": appointment.treatment,
@@ -225,6 +316,9 @@ def serialize_appointment(appointment: Appointment, *, include_details: bool = T
             for medication in appointment.medications
         ],
     }
+    data["follow_up_of"] = _brief(appointment.follow_up_of)
+    data["follow_ups"] = [_brief(item) for item in appointment.follow_ups]
+
     if include_details:
         data["reminders"] = [
             {

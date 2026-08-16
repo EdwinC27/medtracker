@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1 data-i18n="doctor.title"></h1>
+  <button class="btn btn--primary" id="add-doctor" data-i18n="doctor.add"></button>
+</div>
+
+<div class="field field--search">
+  <input id="doctor-search" type="text" data-i18n-placeholder="doctor.search_placeholder">
+</div>
+
+<div id="doctor-list" class="grid grid--cards"></div>
+
+<dialog id="doctor-dialog" class="dialog">
+  <form id="doctor-form" class="form">
+    <div class="dialog__head">
+      <h2 id="doctor-dialog-title" data-i18n="doctor.new"></h2>
+      <button type="button" class="icon-btn" data-close-dialog data-i18n-aria-label="common.close">✕</button>
+    </div>
+
+    <div class="form__body">
+      <div class="field">
+        <label for="doc-name"><span data-i18n="doctor.name"></span> <span class="req">*</span></label>
+        <input id="doc-name" name="name" type="text" required maxlength="160" data-i18n-placeholder="doctor.name_placeholder">
+        <p class="field__error" data-error-for="name"></p>
+      </div>
+
+      <div class="field">
+        <label for="doc-occupation" data-i18n="doctor.occupation"></label>
+        <input id="doc-occupation" name="occupation" type="text" maxlength="160" data-i18n-placeholder="doctor.occupation_placeholder">
+      </div>
+
+      <div class="field">
+        <label for="doc-phone" data-i18n="doctor.phone"></label>
+        <input id="doc-phone" name="phone" type="tel" maxlength="60" data-i18n-placeholder="doctor.phone_placeholder">
+      </div>
+
+      <div class="field">
+        <label for="doc-notes" data-i18n="doctor.notes"></label>
+        <textarea id="doc-notes" name="notes" rows="3" maxlength="2000" data-i18n-placeholder="doctor.notes_placeholder"></textarea>
+      </div>
+    </div>
+
+    <div class="dialog__actions">
+      <button type="button" class="btn btn--ghost" data-close-dialog data-i18n="common.cancel"></button>
+      <button type="submit" class="btn btn--primary" data-i18n="common.save"></button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/doctors.js?v={{ version }}"></script>
+{% endblock %}

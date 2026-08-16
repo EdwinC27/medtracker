@@ -49,6 +49,20 @@ def medication_detail_page(
     )
 
 
+@router.get("/doctors", response_class=HTMLResponse)
+def doctors_page(request: Request, language: str = Depends(get_language)):
+    return _render(request, "doctors.html", language, page="doctors")
+
+
+@router.get("/doctors/{doctor_id}", response_class=HTMLResponse)
+def doctor_detail_page(
+    doctor_id: int, request: Request, language: str = Depends(get_language)
+):
+    return _render(
+        request, "doctor_detail.html", language, page="doctors", doctor_id=doctor_id
+    )
+
+
 @router.get("/appointments", response_class=HTMLResponse)
 def appointments_page(request: Request, language: str = Depends(get_language)):
     return _render(request, "appointments.html", language, page="appointments")

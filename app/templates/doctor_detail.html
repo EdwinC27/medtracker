@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block content %}
+<p><a class="back-link" href="/doctors">← <span data-i18n="doctor.title"></span></a></p>
+
+<div id="doctor-detail" data-doctor-id="{{ doctor_id }}">
+  <p class="muted" data-i18n="common.loading"></p>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/doctor_detail.js?v={{ version }}"></script>
+{% endblock %}
