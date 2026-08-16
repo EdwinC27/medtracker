@@ -6,6 +6,9 @@ jinja2>=3.1
 python-multipart>=0.0.9
 apscheduler>=3.10,<4
 
+# PDF export (v3). Pure Python, no system libraries needed.
+reportlab>=4.0,<5
+
 # Windows desktop toasts (installed only on Windows)
 winotify>=1.1.0; sys_platform == "win32"
 
