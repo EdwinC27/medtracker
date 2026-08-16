@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="app.name">MedTracker</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ version }}">
+  <link rel="icon" href="/static/img/icon.svg">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('medtracker-theme') || 'system';
+        document.documentElement.setAttribute('data-theme', saved);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'system'); }
+    })();
+  </script>
+</head>
+{# Deliberately not extending base.html: the lock screen shows no navigation,
+   no search box and no notification bell, so nothing about the user's
+   treatments is on screen before the PIN is entered. #}
+<body data-page="lock" data-language="{{ language }}" class="locked">
+  <main class="lock">
+    <section class="lock__card card">
+      <span class="brand__mark lock__mark" aria-hidden="true">＋</span>
+      <h1 data-i18n="app.name">MedTracker</h1>
+      <p class="muted" data-i18n="lock.prompt"></p>
+
+      <form id="lock-form" class="form" autocomplete="off">
+        <div class="field">
+          <label for="lock-pin" class="sr-only" data-i18n="lock.pin"></label>
+          <input id="lock-pin" name="pin" type="password" inputmode="numeric"
+                 pattern="[0-9]*" maxlength="6" autocomplete="off"
+                 class="lock__input" required>
+          <p class="field__error" data-error-for="pin"></p>
+        </div>
+        <button type="submit" id="lock-submit" class="btn btn--primary btn--block"
+                data-i18n="lock.unlock"></button>
+      </form>
+
+      <p class="hint" id="lock-hint" data-i18n="lock.hint"></p>
+    </section>
+  </main>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+  <script src="/static/js/i18n.js?v={{ version }}"></script>
+  <script src="/static/js/format.js?v={{ version }}"></script>
+  <script src="/static/js/api.js?v={{ version }}"></script>
+  <script src="/static/js/ui.js?v={{ version }}"></script>
+  <script src="/static/js/lock.js?v={{ version }}"></script>
+</body>
+</html>

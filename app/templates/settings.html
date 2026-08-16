@@ -4,6 +4,13 @@
   <h1 data-i18n="settings.title"></h1>
 </div>
 
+<div class="filters" id="settings-tabs">
+  <button class="chip is-active" type="button" data-tab="general" data-i18n="settings.tab_general"></button>
+  <button class="chip" type="button" data-tab="security" data-i18n="settings.tab_security"></button>
+  <button class="chip" type="button" data-tab="status" data-i18n="settings.tab_status"></button>
+</div>
+
+<section id="tab-general">
 <form id="settings-form" class="stack">
   <section class="card">
     <h2 data-i18n="settings.appearance"></h2>
@@ -245,6 +252,12 @@
 
   <section class="card">
     <h2 data-i18n="settings.system"></h2>
+    <label class="check">
+      <input type="checkbox" name="start_with_windows">
+      <span data-i18n="settings.start_with_windows"></span>
+    </label>
+    <p class="hint" data-i18n="settings.start_with_windows_hint"></p>
+    <p class="hint" id="startup-note"></p>
     <dl class="meta-list">
       <dt data-i18n="settings.scheduler_status"></dt><dd id="scheduler-status">—</dd>
       <dt data-i18n="settings.database_location"></dt><dd id="database-path" class="mono">—</dd>
@@ -257,8 +270,91 @@
     <button type="submit" class="btn btn--primary" data-i18n="common.save"></button>
   </div>
 </form>
+</section>
+
+<section id="tab-security" class="hidden stack">
+  <div class="card">
+    <h2 data-i18n="security.app_lock"></h2>
+    <p class="hint" data-i18n="security.app_lock_hint"></p>
+    <p><span class="badge" id="lock-state-badge">—</span></p>
+
+    <!-- Turning the lock on: a new PIN, twice. -->
+    <form id="lock-enable-form" class="form hidden">
+      <div class="field-row">
+        <div class="field">
+          <label for="lock-new-pin" data-i18n="security.create_pin"></label>
+          <input id="lock-new-pin" name="pin" type="password" inputmode="numeric"
+                 pattern="[0-9]*" maxlength="6" autocomplete="off" required>
+          <p class="field__error" data-error-for="pin"></p>
+        </div>
+        <div class="field">
+          <label for="lock-confirm-pin" data-i18n="security.confirm_pin"></label>
+          <input id="lock-confirm-pin" name="confirm_pin" type="password" inputmode="numeric"
+                 pattern="[0-9]*" maxlength="6" autocomplete="off" required>
+          <p class="field__error" data-error-for="confirm_pin"></p>
+        </div>
+      </div>
+      <p class="hint" id="lock-pin-rule"></p>
+      <button type="submit" class="btn btn--primary" data-i18n="security.enable"></button>
+    </form>
+
+    <!-- Turning it off, or changing the PIN: both need the current one. -->
+    <div id="lock-on-panel" class="hidden stack">
+      <div class="field">
+        <label for="lock-auto" data-i18n="security.auto_lock"></label>
+        <select id="lock-auto"></select>
+      </div>
+
+      <form id="lock-change-form" class="form">
+        <h3 data-i18n="security.change_pin"></h3>
+        <div class="field-row">
+          <div class="field">
+            <label for="lock-current-pin" data-i18n="security.current_pin"></label>
+            <input id="lock-current-pin" name="current_pin" type="password" inputmode="numeric"
+                   pattern="[0-9]*" maxlength="6" autocomplete="off" required>
+            <p class="field__error" data-error-for="current_pin"></p>
+          </div>
+          <div class="field">
+            <label for="lock-change-new" data-i18n="security.new_pin"></label>
+            <input id="lock-change-new" name="pin" type="password" inputmode="numeric"
+                   pattern="[0-9]*" maxlength="6" autocomplete="off" required>
+            <p class="field__error" data-error-for="pin"></p>
+          </div>
+          <div class="field">
+            <label for="lock-change-confirm" data-i18n="security.confirm_pin"></label>
+            <input id="lock-change-confirm" name="confirm_pin" type="password" inputmode="numeric"
+                   pattern="[0-9]*" maxlength="6" autocomplete="off" required>
+            <p class="field__error" data-error-for="confirm_pin"></p>
+          </div>
+        </div>
+        <button type="submit" class="btn btn--primary btn--sm" data-i18n="security.change_pin"></button>
+      </form>
+
+      <form id="lock-disable-form" class="form">
+        <h3 data-i18n="security.disable"></h3>
+        <div class="field">
+          <label for="lock-disable-pin" data-i18n="security.current_pin"></label>
+          <input id="lock-disable-pin" name="current_pin" type="password" inputmode="numeric"
+                 pattern="[0-9]*" maxlength="6" autocomplete="off" required>
+          <p class="field__error" data-error-for="current_pin"></p>
+        </div>
+        <button type="submit" class="btn btn--danger btn--sm" data-i18n="security.disable"></button>
+      </form>
+
+      <div class="row-actions">
+        <button type="button" class="btn btn--ghost btn--sm" id="lock-now"
+                data-i18n="security.lock_now"></button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="tab-status" class="hidden stack">
+  <div id="status-body"><p class="muted" data-i18n="common.loading"></p></div>
+</section>
 {% endblock %}
 
 {% block scripts %}
 <script src="/static/js/settings.js?v={{ version }}"></script>
+<script src="/static/js/settings_v4.js?v={{ version }}"></script>
 {% endblock %}
