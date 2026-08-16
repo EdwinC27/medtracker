@@ -2,10 +2,14 @@
 {% block content %}
 <div class="page-head">
   <div>
-    <h1 data-i18n="dashboard.title"></h1>
-    <p class="muted" id="dashboard-date"></p>
+    <h1 data-i18n="today.title"></h1>
+    <p class="muted" id="today-date"></p>
   </div>
-  <a class="btn btn--primary" href="/medications?new=1" data-i18n="medication.add"></a>
+  <div class="row-actions" style="margin:0">
+    <a class="btn btn--primary btn--sm" href="/medications?new=1" data-i18n="medication.add"></a>
+    <a class="btn btn--ghost btn--sm" href="/appointments?new=1" data-i18n="appointment.add"></a>
+    <a class="btn btn--ghost btn--sm" href="/doctors?new=1" data-i18n="doctor.add"></a>
+  </div>
 </div>
 
 <section class="grid grid--two">
@@ -27,10 +31,15 @@
 
 <section class="section">
   <div class="section__head">
-    <h2 data-i18n="dashboard.todays_doses"></h2>
+    <h2 data-i18n="today.medications"></h2>
     <span class="pill" id="todays-summary"></span>
   </div>
   <div id="todays-doses" class="stack"></div>
+</section>
+
+<section class="section" id="todays-appointments-section">
+  <h2 data-i18n="today.appointments"></h2>
+  <div id="todays-appointments" class="stack"></div>
 </section>
 
 <section class="section">
@@ -40,5 +49,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/dashboard.js?v={{ version }}"></script>
+<script src="/static/js/today.js?v={{ version }}"></script>
 {% endblock %}

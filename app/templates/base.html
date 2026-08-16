@@ -6,6 +6,16 @@
   <title data-i18n="app.name">MedTracker</title>
   <link rel="stylesheet" href="/static/css/styles.css?v={{ version }}">
   <link rel="icon" href="/static/img/icon.svg">
+  <script>
+    /* Applied before the first paint so a dark theme never flashes white.
+       The stored value is a mirror of the server setting, written on load. */
+    (function () {
+      try {
+        var saved = localStorage.getItem('medtracker-theme') || 'system';
+        document.documentElement.setAttribute('data-theme', saved);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'system'); }
+    })();
+  </script>
 </head>
 <body data-page="{{ page }}" data-language="{{ language }}">
   <a class="skip-link" href="#main" data-i18n="nav.menu">Menu</a>
@@ -20,13 +30,24 @@
         </span>
       </a>
 
+      <form class="topsearch" id="topsearch" role="search" action="/search" method="get">
+        <input id="topsearch-input" name="q" type="search" autocomplete="off"
+               data-i18n-placeholder="search.placeholder" data-i18n-aria-label="search.title">
+      </form>
+
+      <a class="bell" href="/notifications" data-i18n-aria-label="notification_center.title">
+        <span aria-hidden="true">🔔</span>
+        <span class="bell__count hidden" id="bell-count">0</span>
+      </a>
+
       <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav">
         <span aria-hidden="true">☰</span>
         <span class="sr-only" data-i18n="nav.menu">Menu</span>
       </button>
 
       <nav class="nav" id="main-nav">
-        <a href="/" data-nav="dashboard" data-i18n="nav.dashboard"></a>
+        <a href="/" data-nav="today" data-i18n="nav.today"></a>
+        <a href="/calendar" data-nav="calendar" data-i18n="nav.calendar"></a>
         <a href="/medications" data-nav="medications" data-i18n="nav.medications"></a>
         <a href="/doctors" data-nav="doctors" data-i18n="nav.doctors"></a>
         <a href="/appointments" data-nav="appointments" data-i18n="nav.appointments"></a>

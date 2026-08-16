@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1 data-i18n="search.title"></h1>
+</div>
+
+<div class="field field--search">
+  <input id="search-input" type="search" autocomplete="off" data-i18n-placeholder="search.placeholder">
+  <p class="hint" id="search-hint" data-i18n="search.hint"></p>
+</div>
+
+<div id="search-results"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/search.js?v={{ version }}"></script>
+{% endblock %}

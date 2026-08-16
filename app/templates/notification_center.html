@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 data-i18n="notification_center.title"></h1>
+    <p class="muted" id="notification-summary"></p>
+  </div>
+  <button class="btn btn--ghost btn--sm" id="mark-all-read" data-i18n="notification_center.mark_all_read"></button>
+</div>
+
+<div class="filters" id="notification-filters">
+  <button class="chip is-active" data-unread="0" data-i18n="common.all"></button>
+  <button class="chip" data-unread="1" data-i18n="notification_center.only_unread"></button>
+</div>
+
+<div id="notification-list" class="stack"></div>
+<div class="row-actions">
+  <button class="btn btn--ghost btn--sm hidden" id="load-more" data-i18n="notification_center.load_more"></button>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/notification_center.js?v={{ version }}"></script>
+{% endblock %}

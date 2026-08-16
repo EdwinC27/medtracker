@@ -1,20 +1,44 @@
 {% extends "base.html" %}
 {% block content %}
 <div class="page-head">
-  <div>
-    <h1 data-i18n="nav.history"></h1>
-    <p class="muted" data-i18n="dose.history"></p>
+  <h1 data-i18n="nav.history"></h1>
+</div>
+
+<div class="filters" id="history-tabs">
+  <button class="chip is-active" data-tab="timeline" data-i18n="timeline.title"></button>
+  <button class="chip" data-tab="medications" data-i18n="medication.title"></button>
+</div>
+
+<section id="tab-timeline">
+  <div class="filters" id="timeline-order">
+    <button class="chip is-active" data-order="newest" data-i18n="timeline.newest"></button>
+    <button class="chip" data-order="oldest" data-i18n="timeline.oldest"></button>
   </div>
-</div>
+  <div class="filters" id="timeline-kind">
+    <button class="chip is-active" data-kind="all" data-i18n="timeline.treatment_filter_all"></button>
+    <button class="chip" data-kind="appointments" data-i18n="timeline.treatment_filter_appointments"></button>
+    <button class="chip" data-kind="treatments" data-i18n="timeline.treatment_filter_treatments"></button>
+  </div>
+  <div class="field-row" style="max-width:640px">
+    <div class="field"><select id="timeline-doctor"></select></div>
+    <div class="field"><select id="timeline-medication"></select></div>
+  </div>
+  <div id="timeline-list" class="stack"></div>
+  <div class="row-actions">
+    <button class="btn btn--ghost btn--sm hidden" id="timeline-more"
+            data-i18n="notification_center.load_more"></button>
+  </div>
+</section>
 
-<div class="filters" id="history-filters">
-  <button class="chip is-active" data-filter="all" data-i18n="common.all"></button>
-  <button class="chip" data-filter="active" data-i18n="status.active"></button>
-  <button class="chip" data-filter="completed" data-i18n="status.completed"></button>
-  <button class="chip" data-filter="suspended" data-i18n="status.suspended"></button>
-</div>
-
-<div id="history-list" class="stack"></div>
+<section id="tab-medications" class="hidden">
+  <div class="filters" id="history-filters">
+    <button class="chip is-active" data-filter="all" data-i18n="common.all"></button>
+    <button class="chip" data-filter="active" data-i18n="status.active"></button>
+    <button class="chip" data-filter="completed" data-i18n="status.completed"></button>
+    <button class="chip" data-filter="suspended" data-i18n="status.suspended"></button>
+  </div>
+  <div id="history-list" class="stack"></div>
+</section>
 {% endblock %}
 
 {% block scripts %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 data-i18n="calendar.title"></h1>
+    <p class="muted" id="calendar-range"></p>
+  </div>
+  <div class="row-actions" style="margin:0">
+    <button class="btn btn--ghost btn--sm" id="cal-prev" data-i18n="calendar.previous"></button>
+    <button class="btn btn--ghost btn--sm" id="cal-today" data-i18n="calendar.today"></button>
+    <button class="btn btn--ghost btn--sm" id="cal-next" data-i18n="calendar.next"></button>
+  </div>
+</div>
+
+<div class="filters" id="calendar-views">
+  <button class="chip is-active" data-view="month" data-i18n="calendar.month"></button>
+  <button class="chip" data-view="week" data-i18n="calendar.week"></button>
+  <button class="chip" data-view="day" data-i18n="calendar.day"></button>
+</div>
+
+<div class="filters" id="calendar-filters">
+  <button class="chip is-active" data-scope="all" data-i18n="calendar.filter_all"></button>
+  <button class="chip" data-scope="medications" data-i18n="calendar.filter_medications"></button>
+  <button class="chip" data-scope="appointments" data-i18n="calendar.filter_appointments"></button>
+  <button class="chip" data-scope="treatments" data-i18n="calendar.filter_treatments"></button>
+</div>
+
+<div class="field-row" style="max-width:640px">
+  <div class="field">
+    <select id="cal-medication"></select>
+  </div>
+  <div class="field">
+    <select id="cal-doctor"></select>
+  </div>
+</div>
+
+<div id="calendar-body"><p class="muted" data-i18n="common.loading"></p></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/calendar.js?v={{ version }}"></script>
+{% endblock %}

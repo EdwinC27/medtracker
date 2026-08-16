@@ -6,6 +6,19 @@
 
 <form id="settings-form" class="stack">
   <section class="card">
+    <h2 data-i18n="settings.appearance"></h2>
+    <p class="hint" data-i18n="settings.theme_hint"></p>
+    <div class="field">
+      <label for="set-theme" data-i18n="settings.theme"></label>
+      <select id="set-theme" name="theme">
+        <option value="system" data-i18n="settings.theme_system"></option>
+        <option value="light" data-i18n="settings.theme_light"></option>
+        <option value="dark" data-i18n="settings.theme_dark"></option>
+      </select>
+    </div>
+  </section>
+
+  <section class="card">
     <h2 data-i18n="settings.language"></h2>
     <p class="hint" data-i18n="settings.language_hint"></p>
     <div class="field">
@@ -64,6 +77,13 @@
     <label class="check"><input type="checkbox" name="dose_after_15"> <span data-i18n="dose_offset.after_15"></span></label>
     <label class="check"><input type="checkbox" name="dose_after_30"> <span data-i18n="dose_offset.after_30"></span></label>
     <label class="check"><input type="checkbox" name="dose_overdue"> <span data-i18n="dose_offset.overdue"></span></label>
+
+    <div class="field" style="margin-top:1rem">
+      <label for="set-history-days" data-i18n="settings.notification_history"></label>
+      <input id="set-history-days" name="notification_history_days" type="number" min="7" max="3650">
+      <p class="hint" data-i18n="settings.notification_history_hint"></p>
+      <p class="field__error" data-error-for="notification_history_days"></p>
+    </div>
 
     <h3 data-i18n="settings.appointment_reminder_defaults"></h3>
     <p class="hint" data-i18n="settings.appointment_reminder_defaults_hint"></p>
@@ -134,6 +154,93 @@
       <button type="button" class="btn btn--ghost btn--sm" id="test-email" data-i18n="settings.test_email"></button>
     </div>
     <p class="hint" id="email-test-result"></p>
+  </section>
+
+  <section class="card" id="data-backup">
+    <h2 data-i18n="settings.data_backup"></h2>
+
+    <label class="check"><input type="checkbox" name="backup_enabled"> <span data-i18n="settings.automatic_backup"></span></label>
+    <p class="hint" data-i18n="settings.automatic_backup_hint"></p>
+
+    <div class="field-row">
+      <div class="field">
+        <label for="set-backup-frequency" data-i18n="settings.backup_frequency"></label>
+        <select id="set-backup-frequency" name="backup_frequency">
+          <option value="daily" data-i18n="settings.backup_daily"></option>
+          <option value="weekly" data-i18n="settings.backup_weekly"></option>
+        </select>
+        <p class="field__error" data-error-for="backup_frequency"></p>
+      </div>
+      <div class="field">
+        <label for="set-backup-time" data-i18n="settings.backup_time"></label>
+        <input id="set-backup-time" name="backup_time" type="time">
+        <p class="field__error" data-error-for="backup_time"></p>
+      </div>
+    </div>
+
+    <div class="field">
+      <label for="set-backup-keep" data-i18n="settings.backup_keep"></label>
+      <select id="set-backup-keep" name="backup_keep"></select>
+      <p class="hint" data-i18n="settings.backup_keep_hint"></p>
+      <p class="field__error" data-error-for="backup_keep"></p>
+    </div>
+
+    <div class="field">
+      <label for="set-backup-location" data-i18n="settings.backup_location"></label>
+      <input id="set-backup-location" name="backup_location" type="text" class="mono">
+      <p class="hint" data-i18n="settings.backup_location_hint"></p>
+      <p class="field__error" data-error-for="backup_location"></p>
+    </div>
+
+    <dl class="meta-list">
+      <dt data-i18n="settings.last_backup"></dt><dd id="last-backup">—</dd>
+    </dl>
+
+    <div class="row-actions">
+      <button type="button" class="btn btn--ghost btn--sm" id="backup-now" data-i18n="settings.backup_now"></button>
+    </div>
+
+    <h3 data-i18n="settings.existing_backups"></h3>
+    <div id="backup-list" class="stack"></div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings.export_data"></h2>
+    <p class="hint" data-i18n="settings.export_hint"></p>
+
+    <div class="field">
+      <label for="set-export-format" data-i18n="settings.export_format"></label>
+      <select id="set-export-format">
+        <option value="csv" data-i18n="export.format_csv"></option>
+        <option value="json" selected data-i18n="export.format_json"></option>
+        <option value="pdf" data-i18n="export.format_pdf"></option>
+      </select>
+    </div>
+
+    <div class="field">
+      <span class="label" data-i18n="settings.export_datasets"></span>
+      <label class="check"><input type="checkbox" data-dataset="medications" checked> <span data-i18n="export.dataset_medications"></span></label>
+      <label class="check"><input type="checkbox" data-dataset="doses" checked> <span data-i18n="export.dataset_doses"></span></label>
+      <label class="check"><input type="checkbox" data-dataset="appointments" checked> <span data-i18n="export.dataset_appointments"></span></label>
+      <label class="check"><input type="checkbox" data-dataset="doctors" checked> <span data-i18n="export.dataset_doctors"></span></label>
+      <label class="check"><input type="checkbox" data-dataset="timeline" checked> <span data-i18n="export.dataset_timeline"></span></label>
+    </div>
+
+    <div class="row-actions">
+      <button type="button" class="btn btn--ghost btn--sm" id="export-run" data-i18n="settings.export_data"></button>
+      <a class="btn btn--primary btn--sm hidden" id="export-download" data-i18n="export.download"></a>
+    </div>
+
+    <h3 data-i18n="settings.import_data"></h3>
+    <p class="hint" data-i18n="settings.import_hint"></p>
+    <div class="field">
+      <input id="import-file" type="file" accept="application/json,.json">
+      <label class="check"><input type="checkbox" id="import-settings"> <span data-i18n="settings.import_settings_too"></span></label>
+    </div>
+    <div id="import-preview"></div>
+    <div class="row-actions">
+      <button type="button" class="btn btn--ghost btn--sm" id="import-run" data-i18n="settings.import_data"></button>
+    </div>
   </section>
 
   <section class="card">
