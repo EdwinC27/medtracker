@@ -20,18 +20,27 @@ run locally on Windows.
   hand.
 - Mark each dose as *Taken* or *Skipped*; a dose left unmarked long enough
   becomes *Missed* on its own.
-- Dose reminders through **Windows notifications** (these work with the browser
-  closed) and browser notifications.
+- Dose reminders at **seven moments around each dose** — 30, 15 and 5 minutes
+  before, at the scheduled time, 15 and 30 minutes after, and once more when it
+  goes overdue — each one individually switchable.
+- Three independent reminder channels: **Windows notifications** (these work
+  with the browser closed), **browser notifications** and **e-mail**.
 - Suspend, resume, complete, edit and delete medications.
 - Browse active, completed and suspended medications with their full dose
   history.
+- Keep a **directory of doctors** with their specialty and phone number, and
+  see every appointment you have had with each of them.
 - Record medical appointments with notes, the treatment prescribed and the
-  follow-up date.
+  follow-up date. Each appointment belongs to a doctor.
+- Mark an appointment as a **follow-up of an earlier visit** and navigate
+  between the two.
 - Configurable appointment reminders: 3 days, 1 day and 3 hours before.
 - Link appointments to medications, navigable in both directions.
 - A fully bilingual interface, **English / Español**, defaulting to the
   browser's language.
 - A global default time for the first dose of the day.
+- Only three fields are required to add a medication: name, frequency and start
+  date. A treatment with no end date simply runs until you stop it.
 
 ## 2. Requirements
 
@@ -107,12 +116,41 @@ interface is responsive and works well on a phone screen.
 
 ## 5. Notifications
 
-There are **two channels**, and they play different roles:
+### When a dose is announced
+
+Every scheduled dose produces up to seven reminders. For a dose at 10:00 AM:
+
+| Reminder | Fires at |
+|---|---|
+| 30 minutes before | 9:30 AM |
+| 15 minutes before | 9:45 AM |
+| 5 minutes before | 9:55 AM |
+| At the scheduled time | 10:00 AM |
+| 15 minutes late | 10:15 AM |
+| 30 minutes late | 10:30 AM |
+| Overdue | 12:00 PM — the dose also becomes *Missed* |
+
+Each one can be switched off on its own in *Settings → Dose reminders*.
+
+**Marking the dose cancels the rest.** The application checks the dose's status
+immediately before every reminder, so if you press *Taken* at 9:50 AM, the
+9:55, 10:00, 10:15, 10:30 and overdue reminders never fire. The same applies to
+*Skipped*.
+
+The overdue delay is the `missed_after_minutes` setting (2 hours by default).
+Once a dose is overdue it stops reminding you, keeps its place in the history,
+and records both the time it was due (`scheduled_at`) and the time it changed
+(`status_changed_at`).
+
+### The three channels
+
+They are completely independent and each has its own switch in Settings:
 
 | Channel | How it works | Works with the browser closed? |
 |---|---|---|
 | **Windows** | The background scheduler sends a toast through `winotify`. | **Yes** — this is the primary channel. |
 | **Browser** | The page polls for pending reminders every 30 s and shows them with the Notification API. | No, but **it shows you what you missed** when you next open it (last 12 hours). |
+| **E-mail** | The scheduler sends a message over SMTP with the settings you enter in the app. | **Yes**, and it reaches your phone too. |
 
 The point worth remembering: **reminders do not depend on keeping a browser tab
 open.** They depend on the application's process running, and that is what the
@@ -138,11 +176,60 @@ Windows), the Settings screen says so and everything else keeps working.
 3. If you blocked it earlier you have to allow it again in the browser's site
    settings; the Settings screen tells you when that is the case.
 
+### Setting up e-mail
+
+*Settings → E-mail*. Everything is configured inside the application; nothing is
+hard-coded and no credentials live in the source.
+
+| Field | Example |
+|---|---|
+| Recipient e-mail | `you@gmail.com` |
+| SMTP host | `smtp.gmail.com` |
+| SMTP port | `587` |
+| Connection security | STARTTLS (587), SSL/TLS (465), or none |
+| SMTP username | `you@gmail.com` |
+| SMTP password | an **app password**, not your normal account password |
+| Sender e-mail | optional; the username is used when it is empty |
+
+Then tick **E-mail notifications** and press **Send a test e-mail**. If it
+fails, the exact SMTP error is shown next to the button — that is what tells a
+wrong port apart from a rejected password.
+
+For Gmail you need 2-step verification enabled and a 16-character app password
+from your Google account; Gmail rejects your normal password over SMTP.
+
+#### How the password is stored
+
+On Windows the password is encrypted with **DPAPI** (`CryptProtectData`,
+reached through `ctypes` — no extra dependency) before it is written to the
+database. DPAPI derives the key from your Windows user account, which means:
+
+* only your Windows account, on this machine, can decrypt it;
+* copying `medtracker.db` — or a backup of it — to another PC leaves the
+  password unreadable;
+* nothing readable is ever written to the database, to a log, or to the repo.
+
+The trade-off is deliberate: reinstalling Windows, or moving the folder to
+another machine or user account, makes the stored password undecryptable, and
+you type it again in Settings. That is expected behaviour, not a failure.
+
+On a system without DPAPI (used for the test-suite and for development) the
+value goes into `data/secret_store.json` with owner-only permissions instead.
+That is noticeably weaker, and the Settings screen says which mechanism is
+active on the machine you are looking at.
+
 ### Notification language
 
 Notifications are written in the language chosen in *Settings*. When that is set
 to "Automatic", Windows toasts follow the operating system's language — there is
 no browser involved at the moment they are sent.
+
+### Never twice
+
+Every reminder carries a unique key of the form `dose:412:before_15` (or
+`appointment:7:day_1`), protected by a unique index in the database. Restarting
+the application — or the machine — cannot produce the same alert twice, because
+the row already exists.
 
 ### Catching up after a shutdown
 
@@ -170,13 +257,19 @@ FastAPI process. **Every 60 seconds** it runs one tick
 (`app/notifications/dispatcher.py::run_tick`) that:
 
 1. Moves any treatment whose end date has passed to *Completed*.
-2. Turns every unmarked dose more than N minutes late into *Missed* (N is
-   configurable, 120 by default).
-3. Finds doses that are due and not yet notified → writes a row in
-   `notifications`.
-4. Finds appointment reminders that are due and unsent → writes another row.
-5. Sends the pending Windows toasts.
-6. Deletes notifications older than 30 days.
+2. Tops up the doses of open-ended treatments to the rolling horizon.
+3. Queues whichever of the six dose reminders are now due, for every dose still
+   in the `scheduled` state — a dose you already marked is simply not a
+   candidate, which is how marking one cancels the rest.
+4. Turns every unmarked dose more than N minutes late into *Missed* (N is
+   configurable, 120 by default) and queues the overdue alert.
+5. Finds appointment reminders that are due and unsent → queues those too.
+6. Sends the pending Windows toasts.
+7. Sends the pending e-mails.
+8. Deletes notifications older than 30 days.
+
+Steps 3–5 all write to the same `notifications` table, and steps 6–7 drain it.
+Adding e-mail in v2 did not add a second scheduler.
 
 **Why in the same process rather than in Windows Task Scheduler:** the web
 server has to be running anyway, so this way there is one thing to start and
@@ -219,16 +312,60 @@ Tables:
 
 | Table | Contents |
 |---|---|
+| `doctors` | name, specialty, phone, notes — stored once and only referenced |
 | `medications` | medication, dose, form, dates, frequency, first dose time, status |
-| `medication_doses` | every calculated dose with its status (`scheduled` / `taken` / `skipped` / `missed`) |
-| `appointments` | appointments, notes, prescribed treatment, follow-up date |
+| `medication_doses` | every calculated dose, its status, when it was due and when that status last changed |
+| `appointments` | visit, notes, prescribed treatment, `doctor_id`, `follow_up_of_id` |
 | `appointment_reminders` | each appointment's reminders (3 days / 1 day / 3 hours) |
 | `appointment_medications` | many-to-many link between appointments and medications |
-| `notifications` | persistent queue of generated alerts |
-| `settings` | single row holding all preferences |
+| `notifications` | persistent queue of generated alerts, with a unique `dedupe_key` per event |
+| `settings` | single row holding all preferences, including the SMTP configuration |
+
+### How the pieces relate
+
+```text
+Doctor
+  └── Appointment            (an appointment belongs to exactly one doctor)
+        ├── Medication       (many-to-many: the same medication can be reviewed
+        │                     at several visits, and one visit can prescribe
+        │                     several medications)
+        └── Appointment      (follow_up_of_id: a later visit can point back at
+                              an earlier one)
+```
+
+Nothing is copied: an appointment stores `doctor_id`, not the doctor's name and
+phone, so correcting a phone number fixes it everywhere at once.
 
 Backup: copy the `data\` folder. To start over, close the app and delete
 `data\medtracker.db` (along with its `.db-wal` / `.db-shm` files).
+
+### Upgrading an existing database
+
+The schema is versioned with SQLite's own `PRAGMA user_version` and migrated at
+startup by `app/database/migrations.py`. It is idempotent — running it twice
+does nothing the second time — and it never drops a row.
+
+Before the first schema change it writes a full copy of the database to
+`data\backups\medtracker-pre-v2-<timestamp>.db`, using SQLite's backup API so
+an active WAL is included correctly. If anything ever looks wrong, that file is
+the exact state you were in beforehand.
+
+What the v1 → v2 migration does:
+
+| Change | What happens to existing data |
+|---|---|
+| New `doctors` table | One doctor is created per distinct `appointments.doctor_name`, and every appointment is repointed at it. An appointment saved with a blank name gets a single placeholder record so the new foreign key holds. |
+| `appointments.doctor_name` removed | Replaced by `doctor_id`; the name now lives only on the doctor. |
+| `appointments.follow_up_of_id` added | Starts empty — follow-up links are something you declare, so nothing is guessed. |
+| Dose fields and `end_date` become optional | Values are copied across unchanged; the columns simply stop being `NOT NULL`. |
+| `medication_doses.status_changed_at` added | Back-filled from `marked_at` where the user had marked the dose. Doses that v1 auto-missed stay `NULL`, which the UI shows as unknown rather than inventing a timestamp. |
+| `notifications` gains `kind`, `dedupe_key`, `email_sent_at` | Existing rows get the key `legacy:<id>` so the new unique index can be created. |
+| `settings` gains the e-mail and dose-reminder columns | E-mail starts off; the six dose reminders start on; your language and hours are untouched. |
+
+The migration counts rows before and after each table rebuild and aborts the
+whole transaction if the numbers ever disagree, so a partial migration cannot
+be committed. `tests/test_migration.py` runs it against a database built with
+the exact v1 DDL and checks all of the above.
 
 ### Medication statuses
 
@@ -246,6 +383,9 @@ and always asks for confirmation first.
 
 - Doses run from the `first dose time` on the `start date`, every `frequency`
   hours, up to the last slot that still falls on the **end date**.
+- With **no end date** the treatment is open-ended: doses are generated 60 days
+  ahead (`DOSE_HORIZON_DAYS`) and topped up on every scheduler tick, so the
+  table never grows without bound and the dashboard always knows the next dose.
 - **Creating** a medication generates the complete treatment.
 - **Editing** the schedule only touches **future** doses. A dose already marked
   as taken, skipped or missed is never modified or deleted.
@@ -253,6 +393,41 @@ and always asks for confirmation first.
 - **Resuming** regenerates them from now until the end date.
 - A dose is **never** set to *Taken* automatically. The only automatic
   transition is *Scheduled → Missed*.
+
+### Required fields
+
+Adding a medication requires only three things, enforced in the backend and not
+just by the browser:
+
+```text
+Medication name *
+Frequency *
+Start date *
+```
+
+Picture, dose, unit, quantity, form, comments and end date are all optional. A
+medication with no dose recorded simply shows its name and frequency.
+
+### Confirmations
+
+Destructive or surprising actions ask first; ordinary ones do not.
+
+| Action | Asks? |
+|---|---|
+| Delete a medication, a doctor or an appointment | Always |
+| Suspend / resume / complete a treatment | Always |
+| **Complete a treatment before its end date** | Yes, and the dialog names both dates: "scheduled to end on August 25 — today is August 20" |
+| Complete a treatment on or after its end date | No extra warning beyond the normal one |
+| **Mark a dose as taken more than 30 minutes early** | Yes, naming the scheduled time and the current time |
+| Mark a dose taken within 30 minutes of its time, or any time after it | No — this is the normal case |
+
+The 30-minute rule is exactly `now < scheduled − 30 min`. It lives in
+`app/services/scheduling.py`, is covered by the tests, and the server sends the
+resulting threshold to the browser so the rule is never re-derived in
+JavaScript.
+
+Deleting a doctor who still has appointments is refused rather than cascading,
+because cascading would silently take visit history with it.
 
 ### The global first dose time
 
@@ -290,6 +465,12 @@ touch your real data. They cover:
 | `tests/test_appointments.py` | the 3-day / 1-day / 3-hour reminders, the link to medications |
 | `tests/test_notifications.py` | the scheduler finds what is due, never repeats an alert, renders text in both languages |
 | `tests/test_i18n.py` | both catalogs have exactly the same keys, none empty, and no interface text is hard-coded in the JavaScript or in template attributes |
+| `tests/test_dose_notifications.py` | the seven reminders fire at −30/−15/−5/0/+15/+30 minutes and at the 2-hour overdue mark, marking a dose cancels the rest, each offset can be switched off, and repeating a tick never duplicates an alert |
+| `tests/test_confirmations.py` | the 30-minute rule at 09:00, 09:29, 09:30, 09:45 and 10:00, and the finish-early rule before, on and after the end date |
+| `tests/test_doctors.py` | doctor CRUD, the delete guard, and the Doctor → Appointment → Medication chain in both directions |
+| `tests/test_follow_ups.py` | an appointment with no follow-up, one that follows an earlier visit, and the refusal to pick a later or identical appointment as the previous one |
+| `tests/test_email.py` | the password never stored or returned in clear text, the channel switch, real message content in both languages, and one send per event |
+| `tests/test_migration.py` | the v1 → v2 migration against a database built with the exact v1 DDL: no row lost, statuses intact, doctor extracted, idempotent |
 | `tests/test_api.py` | the full HTTP flow and that data survives an application restart |
 
 ## 11. Project layout
@@ -299,7 +480,9 @@ C:\ProyectoPersonal
 ├── app/
 │   ├── main.py                 entry point (web + scheduler)
 │   ├── config.py               paths, options, constants
-│   ├── database/db.py          SQLite engine, sessions, pragmas
+│   ├── database/
+│   │   ├── db.py               SQLite engine, sessions, pragmas
+│   │   └── migrations.py       versioned schema upgrades + automatic backup
 │   ├── models/models.py        data model
 │   ├── routes/
 │   │   ├── api.py              JSON API
@@ -308,7 +491,8 @@ C:\ProyectoPersonal
 │   ├── services/
 │   │   ├── scheduling.py       dose calculation (the core logic)
 │   │   ├── medications.py      create/edit/statuses/doses
-│   │   ├── appointments.py     appointments and reminders
+│   │   ├── doctors.py          the doctor directory
+│   │   ├── appointments.py     appointments, reminders and follow-ups
 │   │   ├── settings_service.py preferences
 │   │   ├── dashboard.py        dashboard data
 │   │   ├── textformat.py       server-side date and dose formatting
@@ -316,12 +500,15 @@ C:\ProyectoPersonal
 │   ├── notifications/
 │   │   ├── scheduler.py        APScheduler thread
 │   │   ├── dispatcher.py       what is due and how it is announced
+│   │   ├── email.py            the SMTP channel
 │   │   └── windows.py          Windows toasts (winotify)
 │   ├── i18n/                   en.json, es.json + helpers
 │   ├── templates/              HTML (Jinja2)
 │   ├── static/css|js|img|uploads
-│   └── utils/timeutil.py       local time
-├── data/                       medtracker.db and logs (created automatically)
+│   └── utils/
+│       ├── timeutil.py         local time
+│       └── secretstore.py      DPAPI-protected SMTP password
+├── data/                       medtracker.db, logs and backups/ (created automatically)
 ├── scripts/                    install / start / stop / autostart / tests
 ├── tests/
 ├── requirements.txt
@@ -351,6 +538,16 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
 - A daylight-saving change preserves the displayed time, not the exact interval
   between doses (see section 8).
 - Spanish and English only.
+- Seven reminders per dose is a lot of noise if you leave them all on. They are
+  all enabled by default because that is what was asked for; turn the ones you
+  do not want off in *Settings → Dose reminders*.
+- E-mail is sent synchronously inside the scheduler tick, at most ten messages
+  per pass. A slow or unreachable SMTP server therefore delays that one tick by
+  up to the 20-second socket timeout; it never blocks the web interface.
+- The SMTP password is tied to your Windows account by DPAPI. Moving the folder
+  to another machine or user means retyping it — see section 5.
+- A doctor with appointments cannot be deleted. Delete or move the appointments
+  first; this is deliberate, not a missing feature.
 - Pictures are stored in `app/static/uploads`; they are only backed up if you
   copy that folder too.
 - Windows alerts come from the Python process, so they appear under the
