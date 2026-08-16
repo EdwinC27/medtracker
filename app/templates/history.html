@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <div>
+    <h1 data-i18n="nav.history"></h1>
+    <p class="muted" data-i18n="dose.history"></p>
+  </div>
+</div>
+
+<div class="filters" id="history-filters">
+  <button class="chip is-active" data-filter="all" data-i18n="common.all"></button>
+  <button class="chip" data-filter="active" data-i18n="status.active"></button>
+  <button class="chip" data-filter="completed" data-i18n="status.completed"></button>
+  <button class="chip" data-filter="suspended" data-i18n="status.suspended"></button>
+</div>
+
+<div id="history-list" class="stack"></div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/history.js?v={{ version }}"></script>
+{% endblock %}

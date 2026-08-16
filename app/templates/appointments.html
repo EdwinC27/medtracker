@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1 data-i18n="appointment.title"></h1>
+  <button class="btn btn--primary" id="add-appointment" data-i18n="appointment.add"></button>
+</div>
+
+<div class="filters" id="appointment-filters">
+  <button class="chip is-active" data-filter="all" data-i18n="common.all"></button>
+  <button class="chip" data-filter="upcoming" data-i18n="appointment.upcoming"></button>
+  <button class="chip" data-filter="past" data-i18n="appointment.past"></button>
+</div>
+
+<div id="appointment-list" class="stack"></div>
+
+<dialog id="appointment-dialog" class="dialog dialog--wide">
+  <form id="appointment-form" class="form">
+    <div class="dialog__head">
+      <h2 id="appointment-dialog-title" data-i18n="appointment.new"></h2>
+      <button type="button" class="icon-btn" data-close-dialog data-i18n-aria-label="common.close">✕</button>
+    </div>
+
+    <div class="form__body">
+      <div class="field">
+        <label for="appt-doctor" data-i18n="appointment.doctor"></label>
+        <input id="appt-doctor" name="doctor_name" type="text" required maxlength="160" data-i18n-placeholder="appointment.doctor_placeholder">
+        <p class="field__error" data-error-for="doctor_name"></p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="appt-date" data-i18n="appointment.date"></label>
+          <input id="appt-date" name="date" type="date" required>
+          <p class="field__error" data-error-for="scheduled_at"></p>
+        </div>
+        <div class="field">
+          <label for="appt-time" data-i18n="appointment.time"></label>
+          <input id="appt-time" name="time" type="time" required>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="appt-location" data-i18n="appointment.location"></label>
+        <input id="appt-location" name="location" type="text" maxlength="200" data-i18n-placeholder="appointment.location_placeholder">
+      </div>
+
+      <div class="field">
+        <label for="appt-treatment" data-i18n="appointment.treatment"></label>
+        <input id="appt-treatment" name="treatment" type="text" maxlength="300" data-i18n-placeholder="appointment.treatment_placeholder">
+      </div>
+
+      <div class="field">
+        <label for="appt-notes" data-i18n="appointment.notes"></label>
+        <textarea id="appt-notes" name="notes" rows="3" maxlength="4000" data-i18n-placeholder="appointment.notes_placeholder"></textarea>
+      </div>
+
+      <div class="field">
+        <label for="appt-next" data-i18n="appointment.next_appointment"></label>
+        <input id="appt-next" name="next_appointment_at" type="datetime-local">
+        <p class="hint" data-i18n="appointment.next_appointment_hint"></p>
+      </div>
+
+      <div class="field">
+        <span class="label" data-i18n="appointment.reminders"></span>
+        <label class="check"><input type="checkbox" name="reminder_days_3" checked> <span data-i18n="reminder.days_3"></span></label>
+        <label class="check"><input type="checkbox" name="reminder_day_1" checked> <span data-i18n="reminder.day_1"></span></label>
+        <label class="check"><input type="checkbox" name="reminder_hours_3" checked> <span data-i18n="reminder.hours_3"></span></label>
+      </div>
+
+      <div class="field">
+        <span class="label" data-i18n="appointment.medications"></span>
+        <p class="hint" data-i18n="appointment.medications_hint"></p>
+        <div id="appt-medications" class="check-list"></div>
+      </div>
+    </div>
+
+    <div class="dialog__actions">
+      <button type="button" class="btn btn--ghost" data-close-dialog data-i18n="common.cancel"></button>
+      <button type="submit" class="btn btn--primary" data-i18n="common.save"></button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/appointments.js?v={{ version }}"></script>
+{% endblock %}

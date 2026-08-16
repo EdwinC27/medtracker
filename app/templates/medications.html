@@ -1,0 +1,122 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1 data-i18n="medication.title"></h1>
+  <button class="btn btn--primary" id="add-medication" data-i18n="medication.add"></button>
+</div>
+
+<div class="filters" role="tablist" id="status-filters">
+  <button class="chip is-active" data-filter="all" data-i18n="common.all"></button>
+  <button class="chip" data-filter="active" data-i18n="status.active"></button>
+  <button class="chip" data-filter="completed" data-i18n="status.completed"></button>
+  <button class="chip" data-filter="suspended" data-i18n="status.suspended"></button>
+</div>
+
+<div id="medication-list" class="grid grid--cards"></div>
+
+<dialog id="medication-dialog" class="dialog dialog--wide">
+  <form id="medication-form" class="form">
+    <div class="dialog__head">
+      <h2 id="medication-dialog-title" data-i18n="medication.new"></h2>
+      <button type="button" class="icon-btn" data-close-dialog data-i18n-aria-label="common.close">✕</button>
+    </div>
+
+    <div class="form__body">
+      <h3 data-i18n="medication.basic_information"></h3>
+
+      <div class="field">
+        <label for="med-name" data-i18n="medication.name"></label>
+        <input id="med-name" name="name" type="text" required maxlength="160" data-i18n-placeholder="medication.name_placeholder">
+        <p class="field__error" data-error-for="name"></p>
+      </div>
+
+      <div class="field">
+        <label for="med-image" data-i18n="medication.image"></label>
+        <div class="image-field">
+          <div class="image-preview" id="med-image-preview"></div>
+          <div>
+            <input id="med-image" name="image" type="file" accept="image/png,image/jpeg,image/gif,image/webp">
+            <p class="hint" data-i18n="medication.image_hint"></p>
+            <button type="button" class="btn btn--ghost btn--sm hidden" id="med-image-remove" data-i18n="medication.image_remove"></button>
+          </div>
+        </div>
+        <p class="field__error" data-error-for="image"></p>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="med-dose" data-i18n="medication.dose"></label>
+          <input id="med-dose" name="dose_amount" type="text" required maxlength="40" data-i18n-placeholder="medication.dose_placeholder">
+          <p class="field__error" data-error-for="dose_amount"></p>
+        </div>
+        <div class="field">
+          <label for="med-unit" data-i18n="medication.unit"></label>
+          <select id="med-unit" name="dose_unit"></select>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="med-quantity" data-i18n="medication.quantity"></label>
+          <input id="med-quantity" name="quantity" type="number" min="0.25" step="0.25" value="1" required>
+          <p class="field__error" data-error-for="quantity"></p>
+        </div>
+        <div class="field">
+          <label for="med-form" data-i18n="medication.form"></label>
+          <select id="med-form" name="form"></select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="med-comments" data-i18n="medication.comments"></label>
+        <textarea id="med-comments" name="comments" rows="2" maxlength="2000" data-i18n-placeholder="medication.comments_placeholder"></textarea>
+      </div>
+
+      <h3 data-i18n="medication.schedule"></h3>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="med-start" data-i18n="medication.start_date"></label>
+          <input id="med-start" name="start_date" type="date" required>
+          <p class="field__error" data-error-for="start_date"></p>
+        </div>
+        <div class="field">
+          <label for="med-end" data-i18n="medication.end_date"></label>
+          <input id="med-end" name="end_date" type="date" required>
+          <p class="field__error" data-error-for="end_date"></p>
+        </div>
+      </div>
+
+      <div class="field-row">
+        <div class="field">
+          <label for="med-frequency" data-i18n="medication.frequency"></label>
+          <select id="med-frequency" name="frequency_hours" required></select>
+          <p class="field__error" data-error-for="frequency_hours"></p>
+        </div>
+        <div class="field">
+          <label for="med-first-dose" data-i18n="medication.first_dose_time"></label>
+          <input id="med-first-dose" name="first_dose_time" type="time" required>
+          <p class="hint" data-i18n="medication.first_dose_hint"></p>
+          <p class="field__error" data-error-for="first_dose_time"></p>
+        </div>
+      </div>
+
+      <div class="field">
+        <span class="label" data-i18n="medication.prescribed_at"></span>
+        <div id="med-appointments" class="check-list"></div>
+      </div>
+
+      <p class="preview-line" id="med-schedule-preview"></p>
+    </div>
+
+    <div class="dialog__actions">
+      <button type="button" class="btn btn--ghost" data-close-dialog data-i18n="common.cancel"></button>
+      <button type="submit" class="btn btn--primary" data-i18n="common.save"></button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/medications.js?v={{ version }}"></script>
+{% endblock %}

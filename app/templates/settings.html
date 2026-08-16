@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="page-head">
+  <h1 data-i18n="settings.title"></h1>
+</div>
+
+<form id="settings-form" class="stack">
+  <section class="card">
+    <h2 data-i18n="settings.language"></h2>
+    <p class="hint" data-i18n="settings.language_hint"></p>
+    <div class="field">
+      <select id="set-language" name="language"></select>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings.schedule"></h2>
+
+    <div class="field">
+      <label for="set-first-dose" data-i18n="settings.default_first_dose_time"></label>
+      <input id="set-first-dose" name="default_first_dose_time" type="time" required>
+      <p class="hint" data-i18n="settings.default_first_dose_hint"></p>
+      <p class="field__error" data-error-for="default_first_dose_time"></p>
+    </div>
+
+    <div class="field">
+      <label for="set-ending-soon" data-i18n="settings.ending_soon_days"></label>
+      <input id="set-ending-soon" name="ending_soon_days" type="number" min="0" max="60" required>
+      <p class="hint" data-i18n="settings.ending_soon_hint"></p>
+      <p class="field__error" data-error-for="ending_soon_days"></p>
+    </div>
+
+    <div class="field">
+      <label for="set-missed" data-i18n="settings.missed_after_minutes"></label>
+      <input id="set-missed" name="missed_after_minutes" type="number" min="5" max="1440" required>
+      <p class="hint" data-i18n="settings.missed_after_hint"></p>
+      <p class="field__error" data-error-for="missed_after_minutes"></p>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings.notifications"></h2>
+
+    <label class="check"><input type="checkbox" name="windows_notifications"> <span data-i18n="settings.windows_notifications"></span></label>
+    <p class="hint" data-i18n="settings.windows_notifications_hint"></p>
+
+    <label class="check"><input type="checkbox" name="browser_notifications"> <span data-i18n="settings.browser_notifications"></span></label>
+    <p class="hint" data-i18n="settings.browser_notifications_hint"></p>
+
+    <label class="check"><input type="checkbox" name="medication_reminders"> <span data-i18n="settings.medication_reminders"></span></label>
+    <label class="check"><input type="checkbox" name="appointment_reminders"> <span data-i18n="settings.appointment_reminders"></span></label>
+
+    <h3 data-i18n="settings.appointment_reminder_defaults"></h3>
+    <p class="hint" data-i18n="settings.appointment_reminder_defaults_hint"></p>
+    <label class="check"><input type="checkbox" name="appt_reminder_days_3"> <span data-i18n="reminder.days_3"></span></label>
+    <label class="check"><input type="checkbox" name="appt_reminder_day_1"> <span data-i18n="reminder.day_1"></span></label>
+    <label class="check"><input type="checkbox" name="appt_reminder_hours_3"> <span data-i18n="reminder.hours_3"></span></label>
+
+    <div class="row-actions">
+      <button type="button" class="btn btn--ghost btn--sm" id="request-permission" data-i18n="settings.permission_request"></button>
+      <button type="button" class="btn btn--ghost btn--sm" id="test-notification" data-i18n="settings.test_notification"></button>
+    </div>
+    <p class="hint" id="permission-status"></p>
+  </section>
+
+  <section class="card">
+    <h2 data-i18n="settings.system"></h2>
+    <dl class="meta-list">
+      <dt data-i18n="settings.scheduler_status"></dt><dd id="scheduler-status">—</dd>
+      <dt data-i18n="settings.database_location"></dt><dd id="database-path" class="mono">—</dd>
+      <dt data-i18n="settings.version"></dt><dd id="app-version">—</dd>
+    </dl>
+    <p class="hint" id="windows-availability"></p>
+  </section>
+
+  <div class="sticky-actions">
+    <button type="submit" class="btn btn--primary" data-i18n="common.save"></button>
+  </div>
+</form>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/settings.js?v={{ version }}"></script>
+{% endblock %}

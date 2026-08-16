@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="app.name">MedTracker</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ version }}">
+  <link rel="icon" href="/static/img/icon.svg">
+</head>
+<body data-page="{{ page }}" data-language="{{ language }}">
+  <a class="skip-link" href="#main" data-i18n="nav.menu">Menu</a>
+
+  <header class="topbar">
+    <div class="topbar__inner">
+      <a class="brand" href="/">
+        <span class="brand__mark" aria-hidden="true">＋</span>
+        <span class="brand__text">
+          <strong data-i18n="app.name">MedTracker</strong>
+          <small data-i18n="app.tagline"></small>
+        </span>
+      </a>
+
+      <button class="nav-toggle" id="nav-toggle" aria-expanded="false" aria-controls="main-nav">
+        <span aria-hidden="true">☰</span>
+        <span class="sr-only" data-i18n="nav.menu">Menu</span>
+      </button>
+
+      <nav class="nav" id="main-nav">
+        <a href="/" data-nav="dashboard" data-i18n="nav.dashboard"></a>
+        <a href="/medications" data-nav="medications" data-i18n="nav.medications"></a>
+        <a href="/appointments" data-nav="appointments" data-i18n="nav.appointments"></a>
+        <a href="/history" data-nav="history" data-i18n="nav.history"></a>
+        <a href="/settings" data-nav="settings" data-i18n="nav.settings"></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main" class="container">
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <p class="disclaimer" data-i18n="app.disclaimer"></p>
+    <p class="footer__meta">MedTracker v{{ version }}</p>
+  </footer>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+  <dialog id="confirm-dialog" class="dialog">
+    <form method="dialog" class="dialog__form">
+      <h2 id="confirm-title"></h2>
+      <p id="confirm-body"></p>
+      <div class="dialog__actions">
+        <button value="cancel" class="btn btn--ghost" data-i18n="common.cancel"></button>
+        <button value="confirm" id="confirm-accept" class="btn btn--danger"></button>
+      </div>
+    </form>
+  </dialog>
+
+  <script src="/static/js/i18n.js?v={{ version }}"></script>
+  <script src="/static/js/format.js?v={{ version }}"></script>
+  <script src="/static/js/api.js?v={{ version }}"></script>
+  <script src="/static/js/ui.js?v={{ version }}"></script>
+  <script src="/static/js/components.js?v={{ version }}"></script>
+  <script src="/static/js/notifications.js?v={{ version }}"></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
