@@ -83,8 +83,33 @@ def init_db() -> None:
         )
 
     Base.metadata.create_all(bind=engine)
+    _stamp_schema_version()
 
     from app.services.settings_service import ensure_settings
 
     with session_scope() as db:
         ensure_settings(db)
+
+
+def _stamp_schema_version() -> None:
+    """Record the schema version on a database SQLAlchemy has just created.
+
+    `create_all` writes the current tables but leaves `PRAGMA user_version` at
+    0, which used to make a brand new file indistinguishable from an old one on
+    the next start. Stamping it here means a fresh database is never a
+    migration candidate, and the version detection has one less thing to guess.
+    """
+    import sqlite3
+
+    from app.config import DB_PATH
+    from app.database.migrations import CURRENT_VERSION
+
+    if not DB_PATH.exists():
+        return
+    connection = sqlite3.connect(str(DB_PATH))
+    try:
+        if connection.execute("PRAGMA user_version").fetchone()[0] == 0:
+            connection.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
+            connection.commit()
+    finally:
+        connection.close()

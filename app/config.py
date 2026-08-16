@@ -31,7 +31,7 @@ LOG_DIR.mkdir(parents=True, exist_ok=True)
 LOG_FILE = LOG_DIR / "medtracker.log"
 
 APP_NAME = "MedTracker"
-APP_VERSION = "2.0.0"
+APP_VERSION = "3.2.0"
 
 HOST = os.environ.get("MEDTRACKER_HOST", "0.0.0.0")
 PORT = int(os.environ.get("MEDTRACKER_PORT", "8000"))
@@ -98,3 +98,38 @@ DOSE_NOTIFICATION_OFFSETS: tuple[tuple[str, int], ...] = (
 # Marking a dose as taken this long before its scheduled time (or later) is
 # treated as normal and asks for no confirmation.
 TAKEN_CONFIRMATION_MINUTES = 30
+
+# ---------------------------------------------------------------- v3 ------ #
+# "Remind me later" options, in minutes. A snooze moves the reminder only; the
+# dose keeps its original scheduled time.
+SNOOZE_OPTIONS = (10, 30, 60)
+
+# Appearance. "system" follows the operating system / browser preference.
+THEME_OPTIONS = ("system", "light", "dark")
+
+# Calendar. Views are rendered from a backend query bounded to the visible
+# range, so a year of doses is never shipped to the browser at once.
+CALENDAR_VIEWS = ("month", "week", "day")
+# Hard ceiling on how wide a single calendar request may be.
+CALENDAR_MAX_RANGE_DAYS = 62
+
+# Backups
+BACKUP_DIR = DATA_DIR / "backups"
+BACKUP_DIR.mkdir(parents=True, exist_ok=True)
+BACKUP_FREQUENCIES = ("daily", "weekly")
+BACKUP_KEEP_OPTIONS = (3, 7, 14, 30)
+BACKUP_PREFIX = "medtracker"
+
+# Generated exports live here; each one is written fresh and served once.
+EXPORT_DIR = DATA_DIR / "exports"
+EXPORT_DIR.mkdir(parents=True, exist_ok=True)
+EXPORT_DATASETS = (
+    "medications",
+    "doses",
+    "appointments",
+    "doctors",
+    "timeline",
+)
+
+# How many results each group of a search returns.
+SEARCH_LIMIT = 20

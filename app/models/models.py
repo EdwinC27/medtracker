@@ -47,6 +47,11 @@ class DoseStatus(str, enum.Enum):
     TAKEN = "taken"
     SKIPPED = "skipped"
     MISSED = "missed"
+    # A dose whose time had already passed when the medication was added to the
+    # application. It is history, not a failure: the user could not have marked
+    # it, so it is never reminded about, never counted as missed, and never
+    # changes on its own afterwards.
+    BEFORE_REGISTRATION = "before_registration"
 
 
 class ReminderKind(str, enum.Enum):
@@ -70,6 +75,7 @@ class DoseNotificationKind(str, enum.Enum):
     AFTER_15 = "after_15"
     AFTER_30 = "after_30"
     OVERDUE = "overdue"
+    SNOOZE = "snooze"
 
 
 class Doctor(Base):
@@ -124,17 +130,17 @@ class Medication(Base):
 
     comments: Mapped[str | None] = mapped_column(Text)
 
-    start_date: Mapped[date] = mapped_column(Date, nullable=False)
+    start_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
     # NULL = open-ended treatment. Doses are then generated on a rolling
     # horizon (see config.DOSE_HORIZON_DAYS) and topped up by the scheduler.
-    end_date: Mapped[date | None] = mapped_column(Date)
+    end_date: Mapped[date | None] = mapped_column(Date, index=True)
     frequency_hours: Mapped[int] = mapped_column(Integer, nullable=False)
     # Own copy of the first-dose time so a medication always knows its schedule
     # even if the global default changes later.
     first_dose_time: Mapped[time] = mapped_column(Time, nullable=False)
 
     status: Mapped[str] = mapped_column(
-        String(20), nullable=False, default=MedicationStatus.ACTIVE.value
+        String(20), nullable=False, default=MedicationStatus.ACTIVE.value, index=True
     )
     suspended_at: Mapped[datetime | None] = mapped_column(DateTime)
     completed_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -170,6 +176,9 @@ class MedicationDose(Base):
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=DoseStatus.SCHEDULED.value
     )
+    # Set by "remind me later". It moves the REMINDER only: `scheduled_at`
+    # above is the historical record and is never touched by a snooze.
+    snoozed_until: Mapped[datetime | None] = mapped_column(DateTime, index=True)
     # When the user actually pressed Taken / Skipped (never set automatically).
     marked_at: Mapped[datetime | None] = mapped_column(DateTime)
     # When the status last changed, whoever changed it — including the
@@ -281,6 +290,14 @@ class Notification(Base):
     browser_delivered_at: Mapped[datetime | None] = mapped_column(DateTime)
     email_sent_at: Mapped[datetime | None] = mapped_column(DateTime)
     error: Mapped[str | None] = mapped_column(Text)
+    # v3: the in-app notification centre keeps its own read state, separate
+    # from whether a channel managed to deliver the alert.
+    read_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    # v4.1: the RFC 5322 Message-ID this notification was e-mailed under. Every
+    # reminder for one dose quotes the earlier ones in In-Reply-To/References,
+    # which is what makes a mail client group them into a single conversation —
+    # one thread per dose, never one per medication.
+    email_message_id: Mapped[str | None] = mapped_column(String(200), index=True)
 
 
 class Settings(Base):
@@ -336,6 +353,27 @@ class Settings(Base):
     smtp_security: Mapped[str] = mapped_column(
         String(10), nullable=False, default="starttls"
     )  # "starttls" | "ssl" | "none"
+
+    # --- appearance (v3) ---
+    theme: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="system"
+    )  # "system" | "light" | "dark"
+
+    # --- notification centre (v3) ---
+    notification_history_days: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=90
+    )
+
+    # --- backups (v3) ---
+    backup_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    backup_frequency: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="daily"
+    )  # "daily" | "weekly"
+    backup_time: Mapped[time] = mapped_column(Time, nullable=False, default=time(1, 0))
+    backup_keep: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    # NULL = the default folder, data/backups.
+    backup_location: Mapped[str | None] = mapped_column(Text)
+    last_backup_at: Mapped[datetime | None] = mapped_column(DateTime)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime, default=now_local, onupdate=now_local

@@ -23,6 +23,14 @@ Versions
 1 -> 2  doctors, appointment.doctor_id + follow_up_of_id, optional medication
         fields, dose.status_changed_at, notification dedupe/kind/email columns,
         settings for e-mail and the six dose reminders
+2 -> 3  dose.snoozed_until, notification.read_at, settings for appearance,
+        notification history and backups, plus the indexes the calendar,
+        timeline and search rely on
+3 -> 4  no schema change: doses that were due before their own medication was
+        added to the application are reclassified from "missed" to
+        "before_registration", because the user was never able to mark them
+4 -> 5  notification.email_message_id, so every reminder for one dose can quote
+        the earlier ones and mail clients group them into a single conversation
 """
 
 from __future__ import annotations
@@ -37,7 +45,7 @@ from app.config import DATA_DIR, DB_PATH
 
 logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 2
+CURRENT_VERSION = 5
 BACKUP_DIR = DATA_DIR / "backups"
 
 
@@ -55,10 +63,13 @@ def _columns(con: sqlite3.Connection, table: str) -> list[str]:
     return [row[1] for row in con.execute(f"PRAGMA table_info('{table}')")]
 
 
-def _add_column(con: sqlite3.Connection, table: str, column: str, ddl: str) -> None:
-    if column not in _columns(con, table):
-        con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
-        logger.info("migration: added %s.%s", table, column)
+def _add_column(con: sqlite3.Connection, table: str, column: str, ddl: str) -> bool:
+    """Add a column if it is missing. True when it was actually added."""
+    if column in _columns(con, table):
+        return False
+    con.execute(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}")
+    logger.info("migration: added %s.%s", table, column)
+    return True
 
 
 def backup_database(tag: str) -> Path | None:
@@ -93,8 +104,19 @@ def detect_version(con: sqlite3.Connection) -> int:
         return int(version)
     if not _table_exists(con, "medications"):
         return CURRENT_VERSION  # brand new database
+    if "email_message_id" in _columns(con, "notifications"):
+        # The v5 shape. 3 -> 4 is data-only, so a file that has this column but
+        # no stamp was created by the current models and needs nothing.
+        return CURRENT_VERSION
+    if "snoozed_until" in _columns(con, "medication_doses"):
+        # v3 and v4 have the *same* schema - 3 -> 4 corrects data, not
+        # structure - so the shape cannot tell them apart. Report 3 and let the
+        # (idempotent, row-count-guarded) reclassification decide: on a database
+        # that has nothing to correct it updates zero rows, and on a real v3
+        # file it does the work that would otherwise be skipped forever.
+        return 3
     if _table_exists(con, "doctors") and "doctor_id" in _columns(con, "appointments"):
-        return CURRENT_VERSION  # already v2, just never stamped
+        return 2
     return 1
 
 
@@ -116,8 +138,12 @@ def run_migrations(db_path: Path | None = None) -> dict:
         version = detect_version(con)
         report["from"] = version
         if version >= CURRENT_VERSION:
-            con.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
-            con.commit()
+            # Stamp a file that is current but unstamped; never *lower* the
+            # stamp of one written by a newer release, which would invite that
+            # release to re-run a migration it has already applied.
+            if con.execute("PRAGMA user_version").fetchone()[0] < CURRENT_VERSION:
+                con.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
+                con.commit()
             return report
 
         if db_path is None:
@@ -126,6 +152,15 @@ def run_migrations(db_path: Path | None = None) -> dict:
         if version < 2:
             _migrate_1_to_2(con)
             report["applied"].append("1->2")
+        if version < 3:
+            _migrate_2_to_3(con)
+            report["applied"].append("2->3")
+        if version < 4:
+            report["reclassified_doses"] = _migrate_3_to_4(con)
+            report["applied"].append("3->4")
+        if version < 5:
+            _migrate_4_to_5(con)
+            report["applied"].append("4->5")
 
         con.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
         con.commit()
@@ -356,3 +391,159 @@ def _migrate_1_to_2(con: sqlite3.Connection) -> None:
 
     con.commit()
     con.execute("PRAGMA foreign_keys = ON")
+
+
+# --------------------------------------------------------------------------- #
+# 2 -> 3
+# --------------------------------------------------------------------------- #
+def _migrate_2_to_3(con: sqlite3.Connection) -> None:
+    """Additive only: new columns and indexes, no table is rebuilt.
+
+    Everything v3 needs fits the existing tables — snooze belongs on the dose,
+    read state on the notification, and the backup preferences in `settings` —
+    so no new table is created.
+    """
+    con.execute("BEGIN")
+
+    # Snooze moves the reminder, never the historical scheduled_at.
+    _add_column(con, "medication_doses", "snoozed_until", "DATETIME")
+    # The notification centre's own read state, independent of delivery.
+    if _add_column(con, "notifications", "read_at", "DATETIME"):
+        # Everything that existed before the notification centre did was already
+        # shown through Windows, the browser or e-mail. Leaving it unread would
+        # greet the user with a bell counting months of old reminders.
+        con.execute("UPDATE notifications SET read_at = fire_at WHERE read_at IS NULL")
+        logger.info("migration: existing notifications marked as already read")
+
+    for column, ddl in (
+        ("theme", "VARCHAR(10) NOT NULL DEFAULT 'system'"),
+        ("notification_history_days", "INTEGER NOT NULL DEFAULT 90"),
+        ("backup_enabled", "BOOLEAN NOT NULL DEFAULT 1"),
+        ("backup_frequency", "VARCHAR(10) NOT NULL DEFAULT 'daily'"),
+        ("backup_time", "TIME NOT NULL DEFAULT '01:00:00'"),
+        ("backup_keep", "INTEGER NOT NULL DEFAULT 7"),
+        ("backup_location", "TEXT"),
+        ("last_backup_at", "DATETIME"),
+    ):
+        _add_column(con, "settings", column, ddl)
+
+    # Indexes for the queries v3 adds: the calendar scans doses and
+    # appointments by date, the timeline groups by doctor, the notification
+    # centre filters by read state, and search filters medications by status.
+    for name, ddl in (
+        ("ix_medication_doses_snoozed_until",
+         "CREATE INDEX IF NOT EXISTS ix_medication_doses_snoozed_until "
+         "ON medication_doses (snoozed_until)"),
+        ("ix_medication_doses_status",
+         "CREATE INDEX IF NOT EXISTS ix_medication_doses_status "
+         "ON medication_doses (status)"),
+        ("ix_medications_start_date",
+         "CREATE INDEX IF NOT EXISTS ix_medications_start_date "
+         "ON medications (start_date)"),
+        ("ix_medications_end_date",
+         "CREATE INDEX IF NOT EXISTS ix_medications_end_date "
+         "ON medications (end_date)"),
+        ("ix_medications_status",
+         "CREATE INDEX IF NOT EXISTS ix_medications_status "
+         "ON medications (status)"),
+        ("ix_notifications_read_at",
+         "CREATE INDEX IF NOT EXISTS ix_notifications_read_at "
+         "ON notifications (read_at)"),
+    ):
+        con.execute(ddl)
+        logger.info("migration: ensured index %s", name)
+
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+
+
+# --------------------------------------------------------------------------- #
+# 3 -> 4
+# --------------------------------------------------------------------------- #
+def _migrate_3_to_4(con: sqlite3.Connection) -> int:
+    """Reclassify doses that were already in the past when their medication was
+    added to the application.
+
+    No schema changes at all: `medication_doses.status` is a plain string, so
+    this migration only corrects data that the previous versions had no way of
+    describing. Until now, entering a treatment that started three weeks ago
+    produced three weeks of doses that the scheduler promptly marked *missed* —
+    which reads as "you failed to take these" when in truth the application did
+    not exist for you yet.
+
+    Only two kinds of dose are touched, and both are unambiguous:
+
+    * `scheduled` — generated but never reached by the overdue sweep, and
+    * `missed`   — set automatically by that sweep,
+
+    and in both cases only when `marked_at IS NULL`, which is the mark of a
+    status the application chose rather than one the user did. Anything the user
+    touched — taken, skipped, or a dose they explicitly marked — is left exactly
+    as it is.
+    """
+    con.execute("BEGIN")
+
+    before = con.execute(
+        "SELECT COUNT(*) FROM medication_doses WHERE status = 'before_registration'"
+    ).fetchone()[0]
+
+    cursor = con.execute(
+        """
+        UPDATE medication_doses
+           SET status = 'before_registration'
+         WHERE status IN ('scheduled', 'missed')
+           AND marked_at IS NULL
+           AND datetime(scheduled_at) < (
+                 SELECT datetime(medications.created_at)
+                   FROM medications
+                  WHERE medications.id = medication_doses.medication_id
+               )
+        """
+    )
+    changed = cursor.rowcount or 0
+
+    # A safety net rather than a real expectation: the UPDATE must only ever
+    # move rows into the new status, never lose one.
+    after = con.execute(
+        "SELECT COUNT(*) FROM medication_doses WHERE status = 'before_registration'"
+    ).fetchone()[0]
+    if after != before + changed:
+        raise RuntimeError(
+            f"reclassification is inconsistent: {before} + {changed} != {after}"
+        )
+
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+
+    logger.info(
+        "migration: %s dose(s) reclassified as predating their registration",
+        changed,
+    )
+    return changed
+
+
+# --------------------------------------------------------------------------- #
+# 4 -> 5
+# --------------------------------------------------------------------------- #
+def _migrate_4_to_5(con: sqlite3.Connection) -> None:
+    """One nullable column: the Message-ID each reminder was e-mailed under.
+
+    Additive and empty to start with. Reminders that were already sent have no
+    Message-ID, so they simply do not participate in a thread — there is nothing
+    to reconstruct, and nothing to lose.
+    """
+    con.execute("BEGIN")
+    _add_column(con, "notifications", "email_message_id", "VARCHAR(200)")
+    con.execute(
+        "CREATE INDEX IF NOT EXISTS ix_notifications_email_message_id "
+        "ON notifications (email_message_id)"
+    )
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+    logger.info("migration: notifications can now carry an e-mail Message-ID")
