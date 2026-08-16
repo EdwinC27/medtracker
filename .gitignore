@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+
+# Local data: database, logs, backups. Never commit personal medical data.
+data/
+*.db
+*.db-wal
+*.db-shm
+
+# Uploaded medication pictures (personal data, kept out of the repo)
+app/static/uploads/*
+!app/static/uploads/.gitkeep
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Transfer folder used to copy the project onto this machine
+_setup/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
