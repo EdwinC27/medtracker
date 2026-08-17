@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="{{ language }}">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title data-i18n="certificate.title">MedTracker</title>
+  <link rel="stylesheet" href="/static/css/styles.css?v={{ version }}">
+  <link rel="icon" href="/static/img/icon.svg">
+  <script>
+    (function () {
+      try {
+        var saved = localStorage.getItem('medtracker-theme') || 'system';
+        document.documentElement.setAttribute('data-theme', saved);
+      } catch (e) { document.documentElement.setAttribute('data-theme', 'system'); }
+    })();
+  </script>
+</head>
+{# Like the lock screen, deliberately not extending base.html: this page is
+   reachable before the PIN is entered, so it carries no navigation, no search
+   and nothing about the user's treatments. It hands over one public
+   certificate and explains what to do with it. #}
+<body data-page="certificate" data-language="{{ language }}" class="locked">
+  <main class="lock">
+    <section class="lock__card card cert-card">
+      <span class="brand__mark lock__mark" aria-hidden="true">＋</span>
+      <h1 data-i18n="certificate.title"></h1>
+      <p class="muted" data-i18n="certificate.intro"></p>
+
+      <p>
+        <a class="btn btn--primary btn--block" href="/api/certificate"
+           download="medtracker-ca.crt" data-i18n="certificate.download"></a>
+      </p>
+
+      <ol class="cert-steps">
+        <li data-i18n="certificate.step_1"></li>
+        <li data-i18n="certificate.step_2"></li>
+        <li data-i18n="certificate.step_3"></li>
+      </ol>
+
+      {% if not https_on %}
+      <p class="hint hint--warning" data-i18n="certificate.https_still_off"></p>
+      {% endif %}
+      <p class="hint" data-i18n="certificate.safety"></p>
+      <p class="hint"><a href="/" data-i18n="certificate.back"></a></p>
+    </section>
+  </main>
+
+  <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
+
+  <script src="/static/js/i18n.js?v={{ version }}"></script>
+  <script src="/static/js/format.js?v={{ version }}"></script>
+  <script src="/static/js/api.js?v={{ version }}"></script>
+  <script src="/static/js/ui.js?v={{ version }}"></script>
+  <script>
+    // Nothing to render: the labels come from the catalog like everywhere else.
+    document.addEventListener('DOMContentLoaded', function () {
+      T.ready().catch(function (err) { console.error(err); });
+    });
+  </script>
+</body>
+</html>

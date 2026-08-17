@@ -110,3 +110,37 @@ def history_page(request: Request, language: str = Depends(get_language)):
 @router.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request, language: str = Depends(get_language)):
     return _render(request, "settings.html", language, page="settings")
+
+
+@router.get("/certificate", response_class=HTMLResponse)
+def certificate_page(request: Request, language: str = Depends(get_language)):
+    """How to trust this computer, on the device that has to trust it.
+
+    Reachable before the PIN, deliberately. The phone has to install the
+    certificate *before* it can do anything useful, and the certificate is a
+    public one that grants nothing — requiring the PIN first would only mean
+    typing it on a page the browser is still calling untrusted.
+    """
+    from app.desktop.network import https_enabled
+
+    return _render(request, "certificate.html", language, https_on=https_enabled())
+
+
+@router.get("/sw.js", include_in_schema=False)
+def service_worker():
+    """The service worker, served from the site root.
+
+    A worker can only act for pages inside its own path, so one served from
+    `/static/` could do nothing for `/` or `/medications`. It lives with the
+    other scripts on disk and is published here, which keeps the source in one
+    place and still gives it the scope it needs.
+    """
+    from fastapi.responses import FileResponse
+
+    from app.config import STATIC_DIR
+
+    return FileResponse(
+        STATIC_DIR / "js" / "sw.js",
+        media_type="application/javascript",
+        headers={"Cache-Control": "no-cache", "Service-Worker-Allowed": "/"},
+    )
