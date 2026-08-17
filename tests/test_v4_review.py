@@ -33,10 +33,22 @@ def enable_lock(client, pin="1234"):
 def test_the_frozen_application_keeps_its_data_outside_its_own_folder(monkeypatch, tmp_path):
     """`__file__` inside a PyInstaller bundle points at a folder the next build
     replaces. Anchoring the database there means every upgrade deletes the
-    user's entire history."""
+    user's entire history.
+
+    `sys.executable` is pinned somewhere empty on purpose. Left alone, this test
+    reads whatever happens to sit near the interpreter running it — which is
+    nothing on a build machine and *the developer's own installation* when the
+    virtual environment lives inside the project, so it passed here and failed
+    on the one machine that matters.
+    """
     import importlib
 
+    lonely = tmp_path / "Program Files" / "MedTracker" / "app.exe"
+    lonely.parent.mkdir(parents=True)
+    lonely.write_bytes(b"")
+
     monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(lonely))
     monkeypatch.setenv("LOCALAPPDATA", str(tmp_path / "AppData"))
     monkeypatch.delenv("MEDTRACKER_DATA_DIR", raising=False)
 
@@ -46,8 +58,9 @@ def test_the_frozen_application_keeps_its_data_outside_its_own_folder(monkeypatc
     try:
         assert reloaded.FROZEN is True
         assert reloaded.DATA_DIR == tmp_path / "AppData" / "MedTracker" / "data"
-        # And nowhere near the code.
+        # And nowhere near the code, or near the executable.
         assert reloaded.BASE_DIR not in reloaded.DATA_DIR.parents
+        assert lonely.parent not in reloaded.DATA_DIR.parents
         assert reloaded.DB_PATH.parent == reloaded.DATA_DIR
     finally:
         monkeypatch.undo()
@@ -198,23 +211,31 @@ def test_an_upload_cannot_be_talked_into_leaving_its_folder(client, tmp_path, mo
     assert client.get("/api/uploads/nope.png").status_code == 404
 
 
+def another_browser():
+    """A second client against the *same running* application.
+
+    Deliberately not `with TestClient(...)`: entering that context runs the
+    lifespan, and the lifespan locks the application — which would make any
+    "the second browser is locked out" assertion pass for entirely the wrong
+    reason, and would silently throw the first browser out too. A phone joining
+    the network does not restart the server.
+    """
+    from app.main import app
+
+    return TestClient(app, base_url=BASE)
+
+
 def test_the_unlock_belongs_to_one_browser(client, tmp_path, monkeypatch):
     """It used to be a single flag on the process, so one person unlocking let
     every other client straight in."""
-    from app.database import db as db_module
-    from app.main import app
-
     enable_lock(client)
     client.post("/api/lock/lock")
     assert client.post("/api/lock/unlock", json={"pin": "1234"}).status_code == 200
     assert client.get("/api/today").status_code == 200
 
-    # A second client, with its own (empty) cookie jar, against the same app.
-    with TestClient(app, base_url=BASE) as other:
-        assert other.get("/api/today").status_code == 423
-        assert other.get("/api/bootstrap").json()["settings"] is None
-
-    assert db_module is not None   # (kept the import honest)
+    other = another_browser()          # its own, empty, cookie jar
+    assert other.get("/api/today").status_code == 423
+    assert other.get("/api/bootstrap").json()["settings"] is None
 
 
 def test_polling_does_not_count_as_somebody_being_there(db):
@@ -436,10 +457,16 @@ def test_a_missing_run_key_is_not_an_error():
         assert state.supported is False and state.error is None
 
 
-def test_a_startup_entry_pointing_at_nothing_is_noticed():
+def test_a_startup_entry_pointing_at_nothing_is_noticed(tmp_path):
     from app.desktop import startup
 
-    assert startup._command_is_runnable(f'"{sys.executable}" --background') is True
+    # A file that exists, made here rather than borrowed from the machine: what
+    # is being checked is "does this path exist", not anything about Python.
+    real = tmp_path / "Medication Organizer.exe"
+    real.write_bytes(b"")
+
+    assert startup._command_is_runnable(f'"{real}" --background') is True
+    assert startup._command_is_runnable(f'"{tmp_path / "gone.exe"}"') is False
     assert startup._command_is_runnable('"C:\\gone\\Medication Organizer.exe"') is False
     assert startup._command_is_runnable("") is False
 
@@ -918,3 +945,146 @@ def test_running_the_tests_cannot_move_the_users_real_photographs(monkeypatch, t
     assert datamove.migrate_legacy_uploads() == 0
     assert (legacy / "pill.png").read_bytes() == b"a real photograph"
     assert not scratch.exists()
+
+
+def test_the_computer_and_the_phone_can_both_be_unlocked(client):
+    """One token meant the second browser to enter the PIN silently threw the
+    first one out — so a person using their computer and their phone on the same
+    network would push each other back to the lock screen, for ever."""
+    from app.services import applock
+
+    enable_lock(client)                       # the computer sets it up
+
+    phone = another_browser()
+    assert phone.get("/api/today").status_code == 423
+    assert phone.post("/api/lock/unlock", json={"pin": "1234"}).status_code == 200
+    assert phone.get("/api/today").status_code == 200
+
+    # ...and the computer is still inside, which is the whole point.
+    assert client.get("/api/today").status_code == 200
+
+    # Locking clears every one of them at once, which is the property that
+    # actually has to hold.
+    assert client.post("/api/lock/lock").status_code == 200
+    assert phone.get("/api/today").status_code == 423
+    assert client.get("/api/today").status_code == 423
+    assert applock.current_token() is None
+
+
+def test_the_number_of_unlocked_browsers_is_bounded(db):
+    """Nothing in memory may grow without limit just because someone keeps
+    entering their PIN."""
+    from app.services import applock
+
+    applock.reset_for_tests()
+    settings = get_settings(db)
+    applock.enable(db, settings, "1234", "1234")
+
+    tokens = [applock.unlock() for _ in range(applock.MAX_UNLOCKED_CLIENTS + 5)]
+    assert len(applock._session.tokens) == applock.MAX_UNLOCKED_CLIENTS
+    assert applock.is_locked(settings, token=tokens[-1]) is False
+    assert applock.is_locked(settings, token=tokens[0]) is True     # aged out
+    applock.reset_for_tests()
+
+
+def test_no_test_pretends_to_be_frozen_without_saying_where_from():
+    """A guard against the way this suite lied to itself.
+
+    `sys.frozen = True` makes the application look for a data folder near
+    `sys.executable`. A test that sets the first and not the second reads
+    whatever happens to sit near the interpreter — nothing on a build machine,
+    and the developer's own installation when the virtual environment lives
+    inside the project. That is a test that passes everywhere except on the one
+    computer the software is for.
+    """
+    import re
+
+    root = Path(__file__).resolve().parent
+    offenders = []
+    for path in sorted(root.glob("test_*.py")):
+        text = path.read_text(encoding="utf-8")
+        for block in re.split(r"\ndef test_|\ndef [a-z_]+\(", text):
+            if '"frozen", True' in block and '"executable"' not in block:
+                name = block.split("(")[0].strip()
+                offenders.append(f"{path.name}::{name}")
+    assert not offenders, f"frozen without an executable: {offenders}"
+
+
+def test_starting_with_windows_does_not_open_a_console_every_time(monkeypatch, tmp_path):
+    """The promise is that reminders work without anything being in the way.
+    Registering `python.exe` opens a black console window at every logon, and
+    most people close it — taking the reminders with it."""
+    import sys as _sys
+
+    from app.desktop import startup
+
+    scripts = tmp_path / "Scripts"
+    scripts.mkdir()
+    (scripts / "python.exe").write_bytes(b"")
+    (scripts / "pythonw.exe").write_bytes(b"")
+
+    monkeypatch.setattr(_sys, "executable", str(scripts / "python.exe"))
+    monkeypatch.setattr(_sys, "frozen", False, raising=False)
+
+    command = startup.launch_command()
+    assert "pythonw.exe" in command
+    assert "\\python.exe" not in command and "/python.exe" not in command
+    assert startup.BACKGROUND_FLAG in command
+    # Quoted, because the path has a space in it on every real installation.
+    assert command.startswith('"')
+
+
+def test_the_frozen_application_registers_itself(monkeypatch, tmp_path):
+    import sys as _sys
+
+    from app.desktop import startup
+
+    exe = tmp_path / "Medication Organizer" / "Medication Organizer.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_bytes(b"")
+    monkeypatch.setattr(_sys, "frozen", True, raising=False)
+    monkeypatch.setattr(_sys, "executable", str(exe))
+
+    command = startup.launch_command()
+    assert str(exe) in command
+    assert "desktop.py" not in command, "the frozen build must not need the source"
+    assert command.startswith('"') and startup.BACKGROUND_FLAG in command
+
+
+def test_a_python_with_no_windowless_twin_is_used_as_it_is(monkeypatch, tmp_path):
+    import sys as _sys
+
+    from app.desktop import startup
+
+    lonely = tmp_path / "bin" / "python.exe"
+    lonely.parent.mkdir(parents=True)
+    lonely.write_bytes(b"")
+    monkeypatch.setattr(_sys, "executable", str(lonely))
+    monkeypatch.setattr(_sys, "frozen", False, raising=False)
+
+    assert "python.exe" in startup.launch_command()
+
+
+def test_no_test_asserts_against_the_live_interpreter_path():
+    """The pattern that has now blocked a build twice.
+
+    A test that checks the real `sys.executable` appears in something the
+    application produced is really asserting a fact about the machine it runs
+    on. Both times it passed on Linux and failed on Windows — which is the
+    worst possible direction, because Windows is the only place this software
+    is used, and the failure lands in the middle of a build.
+
+    Pin a fake interpreter with `monkeypatch` and assert on that instead.
+    """
+    import re
+
+    root = Path(__file__).resolve().parent
+    offenders = []
+    for path in sorted(root.glob("test_*.py")):
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            stripped = line.strip()
+            if not stripped.startswith("assert "):
+                continue
+            if re.search(r"\bsys\.executable\b", stripped) and "monkeypatch" not in stripped:
+                offenders.append(f"{path.name}:{number}: {stripped[:70]}")
+    assert not offenders, "assertions that depend on this machine:\n" + "\n".join(offenders)

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -119,10 +120,33 @@ def test_nothing_happens_and_nothing_breaks_off_windows(monkeypatch, db):
 
 
 def test_the_startup_command_points_at_something_real():
+    """What matters is that the command names a program that exists and is
+    quoted, not *which* program.
+
+    This used to assert `sys.executable` appeared verbatim, which stopped being
+    true the moment the source install started registering `pythonw.exe`
+    instead of `python.exe` to avoid opening a console at every logon. It kept
+    passing on Linux — where there is no `pythonw.exe` to prefer — and failed
+    on the only machine that runs it.
+    """
+    import shlex
+
     command = desktop_startup.launch_command()
-    assert command.startswith('"')
+
+    assert command.startswith('"'), "a path with a space in it must be quoted"
     assert desktop_startup.BACKGROUND_FLAG in command
-    assert sys.executable.split("/")[-1] in command or "Medication" in command
+
+    parts = shlex.split(command, posix=False)
+    program = Path(parts[0].strip('"'))
+    assert program.exists(), f"{program} does not exist"
+
+    # Either the packaged application on its own, or an interpreter plus the
+    # entry point it needs — never an interpreter with nothing to run.
+    if "Medication Organizer" not in program.name:
+        script = Path(parts[1].strip('"'))
+        assert script.name == "desktop.py" and script.exists()
+
+    assert desktop_startup._command_is_runnable(command) is True
 
 
 # --------------------------------------------------------------------------- #
@@ -196,8 +220,8 @@ def test_the_page_reports_every_component(db):
 
     assert keys == {
         "application", "database", "scheduler", "windows_notifications",
-        "browser_notifications", "email_notifications", "backup", "startup",
-        "app_lock",
+        "browser_notifications", "email_notifications", "backup", "network",
+        "startup", "app_lock",
     }
     assert payload["overall"] in {"ok", "warning", "error"}
     assert payload["app_version"]
@@ -329,7 +353,7 @@ def test_one_broken_probe_does_not_break_the_page(db, monkeypatch):
     assert backup_row["level"] == "error"
     assert backup_row["detail_key"] == "status.unavailable"
     # ...and the other eight are still there.
-    assert len(payload["components"]) == 9
+    assert len(payload["components"]) == 10
 
 
 def test_the_health_probe_is_small_and_honest(db):

@@ -276,7 +276,7 @@ def test_the_database_is_left_consistent(v1_db):
 
 def test_running_it_twice_changes_nothing(v1_db):
     first = run_migrations(v1_db)
-    assert first["applied"] == ["1->2", "2->3", "3->4", "4->5", "5->6"]
+    assert first["applied"] == ["1->2", "2->3", "3->4", "4->5", "5->6", "6->7", "7->8", "8->9"]
 
     snapshot = read(v1_db, "SELECT id, status FROM medication_doses ORDER BY id")
     second = run_migrations(v1_db)

@@ -255,7 +255,7 @@ def test_a_backup_from_the_previous_version_is_restored_and_brought_forward(
 
     result = backup_service.restore_backup(db, old.name)
 
-    assert result["migrated"] == ["2->3", "3->4", "4->5", "5->6"]
+    assert result["migrated"] == ["2->3", "3->4", "4->5", "5->6", "6->7", "7->8", "8->9"]
     connection = sqlite3.connect(str(live))
     try:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(medication_doses)")}
@@ -427,12 +427,22 @@ def test_the_automatic_backup_switch_round_trips_through_the_api(client):
 
 
 def test_the_settings_screen_reads_and_writes_that_switch():
-    """The bug was in the browser, not the API: the checkbox was in neither list."""
+    """The bug was in the browser, not the API: the checkbox was in neither of
+    the two hand-written lists of switches.
+
+    This used to assert that the name appeared exactly twice — once per list —
+    which made the duplication itself the thing being protected. There is one
+    list now, so what is checked is the property instead: the switch is in it,
+    and that list is what both the load and the save use."""
     source = (
         __import__("pathlib").Path(__file__).resolve().parent.parent
         / "app" / "static" / "js" / "settings.js"
     ).read_text(encoding="utf-8")
-    assert source.count("'backup_enabled'") == 2
+
+    switches = source.split("const SWITCHES = [")[1].split("];")[0]
+    assert "'backup_enabled'" in switches
+    assert "SWITCHES.forEach" in source.split("async function load")[1].split("async function")[0]
+    assert "SWITCHES.forEach" in source.split("async function submit")[1].split("async function")[0]
 
 
 def test_the_calendar_steps_month_by_month_from_the_first():
