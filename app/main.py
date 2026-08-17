@@ -32,6 +32,8 @@ from app.database.db import init_db
 from app.notifications import scheduler as background_scheduler
 from app.routes import lock_cache
 from app.routes.api import router as api_router
+from app.routes.events import revision_middleware
+from app.routes.events import router as events_router
 from app.routes.lock import lock_middleware
 from app.routes.origin import origin_middleware
 from app.routes.pages import router as pages_router
@@ -113,8 +115,11 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 app.middleware("http")(lock_middleware)
 # And the guard that keeps another website from driving this one.
 app.middleware("http")(origin_middleware)
+# Outermost, so it sees the final status code of everything that got through.
+app.middleware("http")(revision_middleware)
 
 app.include_router(api_router)
+app.include_router(events_router)
 app.include_router(pages_router)
 
 
@@ -150,7 +155,30 @@ async def unhandled_error_handler(_request: Request, exc: Exception):
 def run() -> None:
     import uvicorn
 
-    uvicorn.run(app, host=HOST, port=PORT, log_level="info")
+    from app.desktop import network
+
+    # MEDTRACKER_HOST, if it was set, wins; otherwise the stored Settings switch
+    # decides, so `start.bat` and the packaged application behave the same way.
+    host = network.host_to_bind(HOST if HOST != "127.0.0.1" else None)
+
+    # Record what we are about to bind, so System Status reports fact rather
+    # than repeating the setting back — the two differ exactly when the setting
+    # has been changed and the application not yet restarted, which is the one
+    # case worth telling the user about.
+    from app.services import system_status
+
+    system_status.mark_bound(host)
+
+    options = {}
+    if network.https_enabled():
+        from app.services.certificates import ensure
+
+        bundle = ensure()
+        options["ssl_certfile"] = str(bundle.certificate)
+        options["ssl_keyfile"] = str(bundle.key)
+        logger.info("Serving TLS with %s", bundle.certificate)
+
+    uvicorn.run(app, host=host, port=PORT, log_level="info", **options)
 
 
 if __name__ == "__main__":
