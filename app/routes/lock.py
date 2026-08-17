@@ -47,6 +47,13 @@ ALLOWED_EXACT = frozenset(
         "/api/lock/state",
         "/api/lock/unlock",
         "/favicon.ico",
+        # The certificate and the page explaining it. Both have to work before
+        # the PIN, because on a phone this is what has to happen first: until
+        # the certificate is installed the browser will not treat this
+        # application as trustworthy at all. The file is a public certificate —
+        # it identifies this computer and grants nothing.
+        "/certificate",
+        "/api/certificate",
     }
 )
 ALLOWED_PREFIXES = ("/static/",)
