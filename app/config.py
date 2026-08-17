@@ -10,8 +10,16 @@ next to the `app` package, which is convenient and has always worked. Run from
 the packaged `Medication Organizer.exe`, `__file__` points inside PyInstaller's
 own extraction folder — a folder that is REPLACED wholesale by the next build.
 Anchoring the database there would mean every upgrade silently deleted the
-user's entire history, so when the application is frozen the data lives under
-`%LOCALAPPDATA%`, outside anything an install or an upgrade touches.
+user's entire history.
+
+*There is only ever one database.* The packaged application and `start.bat` are
+the same application on the same machine, so the packaged one uses the source
+installation's data folder when it can find one, and remembers where it went in
+a note under `%LOCALAPPDATA%` — which survives the program folder being rebuilt
+or moved. Only when there is no such installation does it keep its own data
+under `%LOCALAPPDATA%`. Two databases quietly drifting apart, with a dose marked
+in one and invisible in the other, is a worse failure than anything either
+location could produce by itself.
 
 *Uploads are data, not static assets.* The photographs of a person's medication
 are as private as the rest of the record, and anything served from `/static/`
@@ -32,15 +40,90 @@ PROJECT_ROOT = BASE_DIR.parent
 FROZEN = bool(getattr(sys, "frozen", False))
 
 
-def _default_data_dir() -> Path:
-    """Where the database, backups, exports, uploads and logs belong."""
-    if not FROZEN:
-        return PROJECT_ROOT / "data"
-    # Packaged: a per-user location that no reinstall or upgrade overwrites.
+def _user_dir() -> Path:
+    """The per-user folder that no reinstall or upgrade overwrites."""
     base = os.environ.get("LOCALAPPDATA") or os.environ.get("APPDATA")
     if base:
-        return Path(base) / "MedTracker" / "data"
-    return Path.home() / ".medtracker" / "data"
+        return Path(base) / "MedTracker"
+    return Path.home() / ".medtracker"
+
+
+# Where the packaged application remembers which data folder it uses. The note
+# itself lives in the per-user folder, so it survives the program folder being
+# rebuilt, moved or deleted.
+DATA_POINTER = _user_dir() / "data-location.txt"
+
+
+def _read_pointer() -> Path | None:
+    try:
+        if not DATA_POINTER.is_file():
+            return None
+        target = Path(DATA_POINTER.read_text(encoding="utf-8").strip())
+    except OSError:
+        return None
+    return target if target.is_dir() else None
+
+
+def _write_pointer(target: Path) -> None:
+    try:
+        DATA_POINTER.parent.mkdir(parents=True, exist_ok=True)
+        DATA_POINTER.write_text(str(target), encoding="utf-8")
+    except OSError:
+        pass          # not being able to remember it is not a reason to fail
+
+
+def _existing_installation() -> Path | None:
+    """A source installation's `data` folder, if this executable sits near one.
+
+    Looked for up to three levels above the executable, which covers the usual
+    `…\\ProyectoPersonal\\dist\\Medication Organizer\\`. Only a folder that
+    already holds a database counts, and only one that is *outside* the program
+    folder — a folder PyInstaller replaces on the next build is exactly what
+    must not be used.
+    """
+    if not FROZEN:
+        return None
+    here = Path(sys.executable).resolve().parent
+    for level in range(4):
+        try:
+            folder = here.parents[level - 1] if level else here
+        except IndexError:
+            break
+        candidate = folder / "data"
+        if candidate == here / "data":
+            continue                      # inside the program folder
+        if (candidate / "medtracker.db").is_file():
+            return candidate
+    return None
+
+
+def _default_data_dir() -> Path:
+    """Where the database, backups, exports, uploads and logs belong.
+
+    From source this is simply `data/` next to the `app` package, as it always
+    was.
+
+    Packaged, there is one more question to answer than there looks: not just
+    *a* safe folder, but *the same* folder the source installation uses. The two
+    are the same application on the same machine, and two databases drifting
+    apart — a dose marked in one and invisible in the other — is worse than
+    anything either location could do on its own. So the packaged build looks
+    for an existing installation beside it, uses that folder directly, and
+    writes down where it went so that moving the program later changes nothing.
+    """
+    if not FROZEN:
+        return PROJECT_ROOT / "data"
+
+    remembered = _read_pointer()
+    if remembered is not None:
+        return remembered
+
+    existing = _existing_installation()
+    if existing is not None:
+        _write_pointer(existing)
+        return existing
+
+    return _user_dir() / "data"
 
 
 # `.strip() or` rather than a plain default: an environment variable that is
