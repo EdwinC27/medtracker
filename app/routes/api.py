@@ -50,7 +50,27 @@ from app.services.settings_service import (
     update_settings,
 )
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 router = APIRouter(prefix="/api")
+
+
+CLIENT_HEADER = "x-medtracker-client"
+
+
+def _client_id(request: Request) -> str | None:
+    """Which screen is asking.
+
+    A random string the browser keeps for itself, so the computer and the phone
+    each get every reminder instead of racing for it. It identifies a browser,
+    not a person, and is never used for anything else.
+    """
+    value = (request.headers.get(CLIENT_HEADER) or "").strip()
+    if not value or len(value) > 64 or not value.replace("-", "").isalnum():
+        return None
+    return value
 
 
 # --------------------------------------------------------------------------- #
@@ -450,18 +470,30 @@ async def write_settings(request: Request, db: Session = Depends(get_db)):
 # --------------------------------------------------------------------------- #
 @router.get("/notifications/pending")
 def notifications_pending(
-    db: Session = Depends(get_db), language: str = Depends(get_language)
+    request: Request,
+    db: Session = Depends(get_db),
+    language: str = Depends(get_language),
 ):
     settings = get_settings(db)
     if not settings.browser_notifications:
         return {"items": []}
-    return {"items": pending_for_browser(db, language)}
+
+    items = pending_for_browser(db, language, _client_id(request))
+    # A read that writes, on purpose: this is where a device is first seen, and
+    # where its "still here" mark is refreshed. Without the commit the row is
+    # discarded when the session closes, so the device would be met as a
+    # stranger on every single poll — and a stranger is caught up to *now*,
+    # which means it would never be shown anything at all.
+    db.commit()
+    return {"items": items}
 
 
 @router.post("/notifications/delivered")
 async def notifications_delivered(request: Request, db: Session = Depends(get_db)):
     body = await request.json()
-    count = mark_browser_delivered(db, [int(i) for i in body.get("ids", [])])
+    count = mark_browser_delivered(
+        db, [int(i) for i in body.get("ids", [])], _client_id(request)
+    )
     db.commit()
     return {"ok": True, "count": count}
 
@@ -830,6 +862,41 @@ async def lock_auto(request: Request, db: Session = Depends(get_db)):
     db.commit()
     lock_cache.invalidate()
     return {"ok": True, **state}
+
+
+@router.get("/certificate")
+def download_certificate():
+    """The certificate to install on the phone.
+
+    Only the authority's public certificate is ever served — the private keys
+    stay in the data folder and are never reachable over HTTP. What this file
+    lets a phone do is recognise this computer; it grants nothing else and
+    contains no secret.
+    """
+    from fastapi.responses import FileResponse
+
+    from app.services.certificates import ensure, paths
+    from app.services.errors import AppError
+
+    bundle = paths()
+    if not bundle.ca_certificate.is_file():
+        # Made here rather than only when HTTPS is switched on. The phone has to
+        # trust this certificate *before* the switch is useful — turning HTTPS on
+        # first means every later step happens behind a browser warning — and
+        # this is the same certificate the server will use when it is. Offering
+        # a download that 404s because of the order the user happened to do
+        # things in was a trap of our own making.
+        try:
+            bundle = ensure()
+        except Exception as exc:  # noqa: BLE001
+            logger.exception("Could not create the certificate: %s", exc)
+            raise AppError("error.certificate_failed") from None
+
+    return FileResponse(
+        bundle.ca_certificate,
+        media_type="application/x-x509-ca-cert",
+        filename="medtracker-ca.crt",
+    )
 
 
 @router.post("/lock/activity")
