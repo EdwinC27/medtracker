@@ -207,7 +207,8 @@
    * appearing. And if `render()` itself fails, the user gets an explanation and
    * a Retry button rather than a blank screen.
    */
-  function page(render) {
+  function page(render, options) {
+    const settings = options || {};
     document.addEventListener('DOMContentLoaded', function () {
       try { setupChrome(); } catch (e) { console.error(e); }
 
@@ -216,12 +217,25 @@
           applyTheme((T.settings && T.settings.theme) || 'system');
           // The lock screen loads neither of these, and a page that is still
           // locked would only get a 423 from them.
-          if (window.Notifications && !document.body.classList.contains('locked')) {
+          const locked = document.body.classList.contains('locked');
+          if (window.Notifications && !locked) {
             try { Notifications.start(); } catch (e) { console.error(e); }
           }
           try { setupActivity(); } catch (e) { console.error(e); }
           refreshBell();
           document.addEventListener('medtracker:notified', refreshBell);
+          // Reload this screen whenever anything changes — including when the
+          // change was made on another device. Pages that are mostly a form
+          // opt out with {live: false}: reloading one would quietly replace
+          // what the user had typed with what is saved.
+          if (window.Live && !locked && settings.live !== false) {
+            try {
+              Live.start(function () {
+                refreshBell();
+                return render();
+              });
+            } catch (e) { console.error(e); }
+          }
           return render();
         })
         .catch(function (err) {

@@ -31,6 +31,39 @@
     get text() { return T.t(this.key); }
   }
 
+  /* Which screen this is.
+   *
+   * A random string kept in this browser's own storage. The server uses it to
+   * remember which reminders this device has already shown — without it, the
+   * first device to ask took the reminder and the phone silently stopped being
+   * reminded of anything whenever the computer was awake. It identifies a
+   * browser, never a person, and is used for nothing else. */
+  const CLIENT_KEY = 'medtracker-client-id';
+  let clientId = null;
+
+  function client() {
+    if (clientId) return clientId;
+    try {
+      clientId = localStorage.getItem(CLIENT_KEY);
+      if (!clientId) {
+        const bytes = new Uint8Array(16);
+        (window.crypto || {}).getRandomValues
+          ? window.crypto.getRandomValues(bytes)
+          : bytes.forEach(function (_, i) { bytes[i] = Math.floor(Math.random() * 256); });
+        clientId = Array.from(bytes, function (b) {
+          return b.toString(16).padStart(2, '0');
+        }).join('');
+        localStorage.setItem(CLIENT_KEY, clientId);
+      }
+    } catch (e) {
+      // Private mode, or storage refused. Falling back to one id per page load
+      // is worse than a stable one but still better than none: this tab will
+      // at least not take the phone's reminders.
+      clientId = clientId || String(Math.random()).slice(2) + String(Math.random()).slice(2);
+    }
+    return clientId;
+  }
+
   let goingToLock = false;
 
   function goToLock() {
@@ -47,7 +80,10 @@
   async function request(method, url, body, options) {
     let response;
     try {
-      const init = { method: method, headers: { 'X-Requested-With': 'MedTracker' } };
+      const init = {
+        method: method,
+        headers: { 'X-Requested-With': 'MedTracker', 'X-Medtracker-Client': client() },
+      };
       if (options && options.poll) init.headers['X-Medtracker-Poll'] = '1';
       if (body instanceof FormData) {
         init.body = body;
@@ -82,6 +118,7 @@
 
   window.API = {
     ApiError: ApiError,
+    clientId: client,
     get: function (url, options) { return request('GET', url, undefined, options); },
     post: function (url, body, options) {
       return request('POST', url, body === undefined ? {} : body, options);
