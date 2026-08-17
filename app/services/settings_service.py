@@ -56,9 +56,11 @@ BOOLEAN_SETTINGS = (
     "dose_after_30",
     "dose_overdue",
     "backup_enabled",
-    # v4: the desktop switch. Kept in this list so it saves, loads and
-    # round-trips exactly like every other switch on the page.
+    # v4: the desktop switches. Kept in this list so they save, load and
+    # round-trip exactly like every other switch on the page.
     "start_with_windows",
+    "network_access",
+    "https_enabled",
 )
 
 

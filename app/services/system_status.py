@@ -325,6 +325,64 @@ def _app_lock(settings) -> dict:
     return _component("app_lock", OK, "status.app_lock_on", **info)
 
 
+def _network(settings) -> dict:
+    """Who can reach the application, and at what address.
+
+    The addresses are here because this is where somebody looks when they want
+    to open the application on their phone. Reading them off the screen beats
+    running `ipconfig` and guessing which of the four answers is the right one.
+    """
+    from app.config import PORT
+    from app.desktop.network import EVERY_INTERFACE, local_addresses
+
+    wanted = bool(settings.network_access)
+    listening = _listening_on()
+    open_now = listening == EVERY_INTERFACE
+
+    from app.desktop.network import https_enabled
+
+    facts = {
+        "setting": wanted,
+        "https": https_enabled(),
+        "listening_on": listening,
+        "port": PORT,
+        "local_url": f"http://127.0.0.1:{PORT}",
+        "addresses": [
+            f"{'https' if https_enabled() else 'http'}://{address}:{PORT}"
+            for address in local_addresses()
+        ] if open_now else [],
+        # A change of this setting only takes effect on the next start: the port
+        # is bound before the application is in a position to read it.
+        "restart_required": wanted != open_now,
+    }
+
+    if wanted != open_now:
+        return _component("network", WARNING, "status.network_restart_required", **facts)
+    if open_now:
+        return _component("network", OK, "status.network_open", **facts)
+    return _component("network", DISABLED, "status.network_local_only", **facts)
+
+
+def _listening_on() -> str:
+    """What the running server actually bound to, not what was asked for."""
+    from app.config import HOST
+    from app.desktop.network import EVERY_INTERFACE, host_to_bind
+
+    global _bound_host
+    if _bound_host is not None:
+        return _bound_host
+    return host_to_bind(HOST if HOST != "127.0.0.1" else None) or EVERY_INTERFACE
+
+
+_bound_host: str | None = None
+
+
+def mark_bound(host: str) -> None:
+    """Told by the launcher, so the report states fact rather than intention."""
+    global _bound_host
+    _bound_host = host
+
+
 # --------------------------------------------------------------------------- #
 # The page
 # --------------------------------------------------------------------------- #
@@ -342,6 +400,7 @@ def collect(db: Session, settings=None) -> dict:
         ("browser_notifications", lambda: _browser_notifications(settings)),
         ("email_notifications", lambda: _email_notifications(settings)),
         ("backup", lambda: _backup(settings)),
+        ("network", lambda: _network(settings)),
         ("startup", lambda: _desktop(settings)),
         ("app_lock", lambda: _app_lock(settings)),
     )

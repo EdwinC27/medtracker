@@ -103,6 +103,7 @@
       <button type="button" class="btn btn--ghost btn--sm" id="test-notification" data-i18n="settings.test_notification"></button>
     </div>
     <p class="hint" id="permission-status"></p>
+    <p class="hint" id="screen-alert-note"></p>
   </section>
 
   <section class="card">
@@ -258,6 +259,30 @@
     </label>
     <p class="hint" data-i18n="settings.start_with_windows_hint"></p>
     <p class="hint" id="startup-note"></p>
+
+    <label class="check">
+      <input type="checkbox" name="network_access">
+      <span data-i18n="settings.network_access"></span>
+    </label>
+    <p class="hint" data-i18n="settings.network_access_hint"></p>
+    <p class="hint hint--warning" data-i18n="settings.network_access_warning"></p>
+    <p class="hint" id="network-note"></p>
+
+    <label class="check">
+      <input type="checkbox" name="https_enabled">
+      <span data-i18n="settings.https_enabled"></span>
+    </label>
+    <p class="hint" data-i18n="settings.https_hint"></p>
+    <div id="https-steps" class="hidden">
+      <ol class="hint hint--steps">
+        <li data-i18n="settings.https_step_1"></li>
+        <li data-i18n="settings.https_step_2"></li>
+        <li data-i18n="settings.https_step_3"></li>
+        <li data-i18n="settings.https_step_4"></li>
+      </ol>
+      <p class="hint" id="https-note"></p>
+    </div>
+
     <dl class="meta-list">
       <dt data-i18n="settings.scheduler_status"></dt><dd id="scheduler-status">—</dd>
       <dt data-i18n="settings.database_location"></dt><dd id="database-path" class="mono">—</dd>

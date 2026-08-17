@@ -7,6 +7,22 @@
 
   const form = function () { return document.getElementById('settings-form'); };
 
+  /* Every switch on this page, in one place.
+   *
+   * There used to be two copies of this list — one to fill the form, one to
+   * read it back — and adding a switch to only one of them made it load
+   * correctly and never save, which looks exactly like a broken save. One list,
+   * used by both. */
+  const SWITCHES = [
+    'windows_notifications', 'browser_notifications', 'email_notifications',
+    'medication_reminders', 'appointment_reminders',
+    'appt_reminder_days_3', 'appt_reminder_day_1', 'appt_reminder_hours_3',
+    'dose_before_30', 'dose_before_15', 'dose_before_5', 'dose_at_time',
+    'dose_after_15', 'dose_after_30', 'dose_overdue',
+    'backup_enabled', 'start_with_windows', 'network_access', 'https_enabled',
+  ];
+
+
   async function load() {
     current = await API.get('/api/settings');
     const f = form();
@@ -42,14 +58,9 @@
     f.ending_soon_days.value = current.ending_soon_days;
     f.missed_after_minutes.value = current.missed_after_minutes;
 
-    [
-      'windows_notifications', 'browser_notifications', 'email_notifications',
-      'medication_reminders', 'appointment_reminders',
-      'appt_reminder_days_3', 'appt_reminder_day_1', 'appt_reminder_hours_3',
-      'dose_before_30', 'dose_before_15', 'dose_before_5', 'dose_at_time',
-      'dose_after_15', 'dose_after_30', 'dose_overdue',
-      'backup_enabled', 'start_with_windows',
-    ].forEach(function (name) { f[name].checked = Boolean(current[name]); });
+    SWITCHES.forEach(function (name) {
+      if (f[name]) f[name].checked = Boolean(current[name]);
+    });
 
     // --- email ---
     f.email_recipient.value = current.email_recipient || '';
@@ -67,6 +78,7 @@
     updateGraceWarning();
     document.getElementById('database-path').textContent = current.database_path;
     document.getElementById('app-version').textContent = current.version;
+    showSystemNotes(current);
 
     await Promise.all([loadStatus(), loadBackups()]);
     showPermission();
@@ -239,9 +251,66 @@
     }
   }
 
+  /* What the machine actually does, next to what the switches say. A switch
+     that claims something the machine is not doing is worse than no switch. */
+  function showSystemNotes(current) {
+    const startupNote = document.getElementById('startup-note');
+    if (startupNote) {
+      const startup = current.startup || {};
+      let text = '';
+      if (!startup.supported) text = T.t('settings.startup_unsupported');
+      else if (startup.error) text = T.t('settings.startup_failed_note');
+      else if (startup.stale) text = T.t('status.startup_stale');
+      else if (!!startup.enabled !== !!current.start_with_windows) {
+        text = T.t('status.startup_mismatch');
+      }
+      startupNote.textContent = text;
+    }
+
+    const networkNote = document.getElementById('network-note');
+    if (networkNote) networkNote.textContent = '';
+
+    // The instructions only make sense once the switch is on, and they are
+    // useless without the address the phone has to open, so they are shown
+    // together with it.
+    const steps = document.getElementById('https-steps');
+    if (steps) steps.classList.toggle('hidden', !current.https_enabled);
+  }
+
+  /* The button that produces the browser's own "Allow notifications?" prompt.
+     It only appears where the browser will actually show it. */
+  function setupPermissionButton() {
+    const button = document.getElementById('request-permission');
+    if (!button) return;
+    button.classList.toggle('hidden', !!(window.ScreenAlert && ScreenAlert.needed()
+      && !window.isSecureContext));
+  }
+
   async function loadStatus() {
     try {
       const status = await API.get('/api/system/status');
+      const network = (status.components || []).filter(function (c) {
+        return c.key === 'network';
+      })[0];
+      const httpsNote = document.getElementById('https-note');
+      if (httpsNote && network) {
+        const address = (network.addresses || [])[0];
+        httpsNote.textContent = address
+          ? T.t('settings.https_certificate_at', { url: address + '/certificate' })
+          : '';
+      }
+
+      const networkNote = document.getElementById('network-note');
+      if (networkNote && network) {
+        if (network.restart_required) {
+          networkNote.textContent = T.t('settings.network_restart_note');
+        } else if ((network.addresses || []).length) {
+          networkNote.textContent =
+            T.t('settings.network_addresses') + ' ' + network.addresses.join('   ');
+        } else {
+          networkNote.textContent = '';
+        }
+      }
       const box = document.getElementById('scheduler-status');
       box.textContent = status.scheduler.running
         ? T.t('settings.scheduler_running', { time: status.scheduler.last_run ? F.time(status.scheduler.last_run) : '—' })
@@ -255,6 +324,15 @@
   }
 
   function showPermission() {
+    const note = document.getElementById('screen-alert-note');
+    if (note) {
+      // Said plainly, because it is the difference between "the phone does not
+      // notify me" and "the phone cannot be notified this way, here is what it
+      // does instead".
+      note.textContent = window.ScreenAlert && ScreenAlert.needed()
+        ? T.t('settings.screen_alert_note') : '';
+    }
+
     const box = document.getElementById('permission-status');
     const permission = Notifications.permission();
     if (permission === 'unsupported') box.textContent = T.t('settings.permission_unsupported');
@@ -290,14 +368,9 @@
       ending_soon_days: f.ending_soon_days.value,
       missed_after_minutes: f.missed_after_minutes.value,
     };
-    [
-      'windows_notifications', 'browser_notifications', 'email_notifications',
-      'medication_reminders', 'appointment_reminders',
-      'appt_reminder_days_3', 'appt_reminder_day_1', 'appt_reminder_hours_3',
-      'dose_before_30', 'dose_before_15', 'dose_before_5', 'dose_at_time',
-      'dose_after_15', 'dose_after_30', 'dose_overdue',
-      'backup_enabled', 'start_with_windows',
-    ].forEach(function (name) { payload[name] = f[name].checked; });
+    SWITCHES.forEach(function (name) {
+      if (f[name]) payload[name] = f[name].checked;
+    });
 
     payload.email_recipient = f.email_recipient.value;
     payload.email_sender = f.email_sender.value;
@@ -344,9 +417,13 @@
     document.getElementById('test-notification').addEventListener('click', async function () {
       try {
         const result = await API.post('/api/notifications/test');
-        if (Notifications.permission() === 'granted') {
-          new Notification(result.title, { body: result.body });
-        }
+        // Through the same path a real reminder takes, so what this shows is
+        // what this device will actually do — a system notification where the
+        // browser allows one, and the on-screen alert where it does not.
+        Notifications.announce({
+          id: 'test-' + Date.now(), type: 'test',
+          title: result.title, body: result.body,
+        });
         if (result.windows_sent) UI.notify.success('settings.test_sent');
         else UI.notify.warning('error.windows_notifications_unavailable');
       } catch (err) { UI.notify.error(err); }
@@ -399,5 +476,8 @@
     await load();
   }
 
-  UI.page(render);
+  // Not live-refreshed: this screen is almost entirely a form, and reloading
+  // it because something changed elsewhere would replace half-typed settings
+  // with the saved ones.
+  UI.page(render, { live: false });
 })();

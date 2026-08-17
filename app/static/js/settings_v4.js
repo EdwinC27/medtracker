@@ -176,6 +176,24 @@
         fact(facts, 'status.location', item.location);
         fact(facts, 'status.reason', reason(item.last_error));
         break;
+      case 'network':
+        fact(facts, 'status.network_listening', item.listening_on);
+        fact(facts, 'status.network_https',
+          T.t(item.https ? 'status.network_https_on' : 'status.network_https_off'));
+        if ((item.addresses || []).length) {
+          // The whole point of this card: the address to type into the phone,
+          // read off the screen instead of guessed from `ipconfig`.
+          facts.appendChild(el('dt', null, T.t('status.network_addresses')));
+          const holder = el('dd');
+          item.addresses.forEach(function (url) {
+            const link = el('a', 'mono', url);
+            link.href = url;
+            link.style.display = 'block';
+            holder.appendChild(link);
+          });
+          facts.appendChild(holder);
+        }
+        break;
       case 'startup':
         fact(facts, 'status.reason', reason(item.error));
         break;
