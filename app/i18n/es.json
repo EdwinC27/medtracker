@@ -260,7 +260,16 @@
     "reason": "Motivo",
     "uptime_value": "{hours} h {minutes} min",
     "reason_unknown": "No se reconoció el motivo; los detalles están en el registro.",
-    "startup_stale": "Está registrado para iniciarse con Windows, pero el programa al que apunta ya no existe. Desactiva y vuelve a activar la opción para repararlo."
+    "startup_stale": "Está registrado para iniciarse con Windows, pero el programa al que apunta ya no existe. Desactiva y vuelve a activar la opción para repararlo.",
+    "network": "Acceso desde la red",
+    "network_open": "Otros dispositivos de esta red pueden entrar a la aplicación",
+    "network_local_only": "Solo esta computadora puede entrar a la aplicación",
+    "network_restart_required": "La opción cambió; reinicia la aplicación para que tome efecto",
+    "network_addresses": "Direcciones",
+    "network_listening": "Escuchando en",
+    "network_https": "Conexión segura",
+    "network_https_on": "Activada — al celular se le puede pedir permiso de notificaciones",
+    "network_https_off": "Desactivada — el celular no puede mostrar notificaciones"
   },
   "frequency": {
     "every_4_hours": "Cada 4 horas",
@@ -540,7 +549,25 @@
     "start_with_windows_hint": "Inicia la aplicación automáticamente al encender Windows, para que los recordatorios sigan funcionando.",
     "tab_general": "General",
     "tab_security": "Seguridad",
-    "tab_status": "Estado del sistema"
+    "tab_status": "Estado del sistema",
+    "network_access": "Permitir acceso desde otros dispositivos de mi red",
+    "network_access_hint": "Te deja abrir la aplicación en tu celular o tableta, en la misma Wi-Fi, con los mismos datos. Toma efecto la próxima vez que inicies la aplicación.",
+    "network_access_warning": "No hay inicio de sesión. Cualquiera en esa red que abra la dirección ve tus medicamentos, tus citas y tus doctores: activa el PIN en Seguridad antes de usar esto.",
+    "network_addresses": "En tu celular, abre:",
+    "network_restart_note": "Guardado. Atenderá la red la próxima vez que inicies la aplicación.",
+    "startup_unsupported": "Solo disponible en Windows.",
+    "startup_failed_note": "Esta computadora no dejó que la aplicación se registrara para iniciar con Windows. Los detalles están en el registro.",
+    "screen_alert_note": "En este dispositivo no se puede mostrar una notificación del sistema (la página no se sirve por conexión segura), así que los recordatorios aparecen en pantalla, con sonido, mientras esta página esté abierta.",
+    "screen_alert_test": "Probar el aviso en pantalla",
+    "screen_alert_title": "Recordatorio de prueba",
+    "screen_alert_body": "Así se ve un recordatorio en este dispositivo.",
+    "https_enabled": "Usar HTTPS (necesario para notificaciones en el celular)",
+    "https_hint": "Los navegadores solo ofrecen «¿Permitir notificaciones?» en una página segura, así que llegar a la barra de notificaciones del celular obliga a servir esta aplicación por HTTPS con un certificado propio. Toma efecto la próxima vez que inicies la aplicación.",
+    "https_step_1": "Activa esto y reinicia la aplicación.",
+    "https_step_2": "En el celular, abre la dirección de abajo. El navegador te va a advertir que el sitio no es de confianza: es lo esperado, es tu propio certificado. Continúa, y ahí mismo descargas e instalas el certificado siguiendo lo que dice la página.",
+    "https_step_3": "Instálalo: Ajustes → Seguridad → Cifrado y credenciales → Instalar un certificado → Certificado de CA. Android te va a advertir; este certificado solo sirve para que tu celular reconozca a tu propia computadora.",
+    "https_step_4": "Vuelve a abrir la aplicación en el celular, ve a Configuración → Notificaciones y pulsa «Permitir notificaciones». Ahora los recordatorios llegan a la barra de notificaciones.",
+    "https_certificate_at": "Certificado: {url}"
   },
   "validation": {
     "required_field": "Este campo es obligatorio.",
@@ -653,7 +680,9 @@
     "cross_site": "Esa solicitud provenía de otro sitio web y fue rechazada.",
     "backup_location_unreachable": "No se pudo acceder a la carpeta de respaldos.",
     "disk_full": "No hay suficiente espacio en el disco.",
-    "backup_location_unwritable": "No se puede escribir en la carpeta de respaldos."
+    "backup_location_unwritable": "No se puede escribir en la carpeta de respaldos.",
+    "certificate_missing": "Todavía no hay certificado. Activa HTTPS y reinicia la aplicación.",
+    "certificate_failed": "No se pudo crear el certificado. Los detalles están en el registro."
   },
   "notification": {
     "medication_title": "Recordatorio de medicamento",
@@ -914,5 +943,20 @@
     "lock_now": "Bloquear ahora",
     "status_on": "Activado",
     "status_off": "Desactivado"
+  },
+  "alert": {
+    "open": "Abrir",
+    "dismiss": "Descartar"
+  },
+  "certificate": {
+    "title": "Confiar en esta computadora",
+    "intro": "Instala este certificado en tu celular para que reconozca a esta computadora. Solo entonces el navegador puede ofrecerte mostrar notificaciones.",
+    "download": "Descargar el certificado",
+    "step_1": "Toca el botón y se descarga el archivo medtracker-ca.crt. Si Chrome te dice que no se puede descargar de forma segura y te da Descartar o Conservar, toca Conservar: el archivo que estás descargando es justamente lo que hace confiable esta conexión.",
+    "step_2": "Abre Ajustes → Seguridad → Cifrado y credenciales → Instalar un certificado → Certificado de CA, y elige medtracker-ca.crt en Descargas.",
+    "step_3": "Vuelve aquí, pon tu PIN, y entra a Configuración → Notificaciones → Permitir notificaciones.",
+    "safety": "Este certificado identifica a tu propia computadora y nada más. No lleva ninguna contraseña ni da acceso a tu información.",
+    "back": "Volver a la aplicación",
+    "https_still_off": "Todavía no está activado HTTPS en la computadora. Instala primero este certificado y después activa allá Configuración → General → Usar HTTPS y reinicia la aplicación — en ese orden, para que nada de lo que hagas aquí ocurra detrás de una advertencia del navegador."
   }
 }

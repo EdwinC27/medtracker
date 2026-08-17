@@ -260,7 +260,16 @@
     "reason": "Reason",
     "uptime_value": "{hours} h {minutes} min",
     "reason_unknown": "The reason was not recognised; the details are in the log.",
-    "startup_stale": "Registered to start with Windows, but the program it points to is no longer there. Turn the setting off and on again to repair it."
+    "startup_stale": "Registered to start with Windows, but the program it points to is no longer there. Turn the setting off and on again to repair it.",
+    "network": "Network access",
+    "network_open": "Other devices on this network can reach the application",
+    "network_local_only": "Only this computer can reach the application",
+    "network_restart_required": "The setting changed; restart the application for it to take effect",
+    "network_addresses": "Addresses",
+    "network_listening": "Listening on",
+    "network_https": "Secure connection",
+    "network_https_on": "On — the phone can be asked for notification permission",
+    "network_https_off": "Off — the phone cannot show notifications"
   },
   "frequency": {
     "every_4_hours": "Every 4 hours",
@@ -540,7 +549,25 @@
     "start_with_windows_hint": "Start the application automatically when Windows starts, so reminders keep working.",
     "tab_general": "General",
     "tab_security": "Security",
-    "tab_status": "System status"
+    "tab_status": "System status",
+    "network_access": "Allow access from other devices on my network",
+    "network_access_hint": "Lets you open the application on your phone or tablet, on the same Wi-Fi, with the same data. Takes effect the next time the application starts.",
+    "network_access_warning": "There is no login. Anyone on that network who opens the address sees your medications, appointments and doctors — turn on the PIN under Security before you use this.",
+    "network_addresses": "On your phone, open:",
+    "network_restart_note": "Saved. It will answer the network the next time the application starts.",
+    "startup_unsupported": "Only available on Windows.",
+    "startup_failed_note": "This computer would not let the application register itself to start with Windows. The details are in the log.",
+    "screen_alert_note": "This device cannot be given a system notification (the page is not served over a secure connection), so reminders appear on screen instead, with a sound — while this page is open.",
+    "screen_alert_test": "Test the on-screen reminder",
+    "screen_alert_title": "Test reminder",
+    "screen_alert_body": "This is what a reminder looks like on this device.",
+    "https_enabled": "Use HTTPS (needed for notifications on the phone)",
+    "https_hint": "Browsers only offer \"Allow notifications?\" on a secure page, so reaching the phone's notification bar means serving this application over HTTPS with a certificate of its own. Takes effect the next time the application starts.",
+    "https_step_1": "Turn this on and restart the application.",
+    "https_step_2": "On the phone, open the address below. The browser will warn you the site is not trusted — that is expected, it is your own certificate. Continue, and that page walks you through downloading and installing it.",
+    "https_step_3": "Install it: Settings → Security → Encryption and credentials → Install a certificate → CA certificate. Android will warn you; this certificate only lets your phone recognise your own computer.",
+    "https_step_4": "Open the application on the phone again, go to Settings → Notifications and press \"Allow notifications\". Now the reminders arrive in the notification bar.",
+    "https_certificate_at": "Certificate: {url}"
   },
   "validation": {
     "required_field": "This field is required.",
@@ -653,7 +680,9 @@
     "cross_site": "That request came from another website and was refused.",
     "backup_location_unreachable": "The backup folder could not be reached.",
     "disk_full": "There is not enough space on the disk.",
-    "backup_location_unwritable": "The backup folder cannot be written to."
+    "backup_location_unwritable": "The backup folder cannot be written to.",
+    "certificate_missing": "There is no certificate yet. Turn HTTPS on and restart the application.",
+    "certificate_failed": "The certificate could not be created. The details are in the log."
   },
   "notification": {
     "medication_title": "Medication reminder",
@@ -914,5 +943,20 @@
     "lock_now": "Lock now",
     "status_on": "On",
     "status_off": "Off"
+  },
+  "alert": {
+    "open": "Open",
+    "dismiss": "Dismiss"
+  },
+  "certificate": {
+    "title": "Trust this computer",
+    "intro": "Install this certificate on your phone so it recognises this computer. Only then can the browser offer to show you notifications.",
+    "download": "Download the certificate",
+    "step_1": "Tap the button and the file medtracker-ca.crt downloads. If Chrome says it cannot be downloaded securely and offers Discard or Keep, tap Keep — the file being downloaded is the very thing that makes this connection trusted.",
+    "step_2": "Open Settings → Security → Encryption and credentials → Install a certificate → CA certificate, and choose medtracker-ca.crt from your Downloads.",
+    "step_3": "Come back here, enter your PIN, and go to Settings → Notifications → Allow notifications.",
+    "safety": "This certificate identifies your own computer and nothing else. It carries no password and gives no access to your information.",
+    "back": "Back to the application",
+    "https_still_off": "HTTPS is not on yet on the computer. Install this certificate first, then switch on Settings → General → Use HTTPS there and restart the application — in that order, so nothing you do here happens behind a browser warning."
   }
 }
