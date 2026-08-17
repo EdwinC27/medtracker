@@ -33,6 +33,14 @@ Versions
         the earlier ones and mail clients group them into a single conversation
 5 -> 6  settings for the desktop build: start-with-Windows, the optional PIN
         lock, and the last backup error System Status reports
+6 -> 7  settings.network_access: whether the other devices on this network may
+        reach the application, so the packaged build can be opened to a phone
+        without editing the shortcut
+7 -> 8  settings.https_enabled: serve the local network over TLS with a
+        certificate of our own, which is the only way a phone's browser will
+        offer to show notifications at all
+8 -> 9  browser_clients: each browser keeps its own place in the notification
+        queue, so a reminder shown on the computer is still shown on the phone
 """
 
 from __future__ import annotations
@@ -47,7 +55,7 @@ from app.config import DATA_DIR, DB_PATH
 
 logger = logging.getLogger(__name__)
 
-CURRENT_VERSION = 6
+CURRENT_VERSION = 9
 BACKUP_DIR = DATA_DIR / "backups"
 
 
@@ -106,9 +114,15 @@ def detect_version(con: sqlite3.Connection) -> int:
         return int(version)
     if not _table_exists(con, "medications"):
         return CURRENT_VERSION  # brand new database
-    if "app_lock_enabled" in _columns(con, "settings"):
-        # The v6 shape: created by the current models, nothing to do.
+    if _table_exists(con, "browser_clients"):
+        # The v9 shape: created by the current models, nothing to do.
         return CURRENT_VERSION
+    if "https_enabled" in _columns(con, "settings"):
+        return 8
+    if "network_access" in _columns(con, "settings"):
+        return 7
+    if "app_lock_enabled" in _columns(con, "settings"):
+        return 6
     if "email_message_id" in _columns(con, "notifications"):
         return 5
     if "snoozed_until" in _columns(con, "medication_doses"):
@@ -167,6 +181,15 @@ def run_migrations(db_path: Path | None = None) -> dict:
         if version < 6:
             _migrate_5_to_6(con)
             report["applied"].append("5->6")
+        if version < 7:
+            _migrate_6_to_7(con)
+            report["applied"].append("6->7")
+        if version < 8:
+            _migrate_7_to_8(con)
+            report["applied"].append("7->8")
+        if version < 9:
+            _migrate_8_to_9(con)
+            report["applied"].append("8->9")
 
         con.execute(f"PRAGMA user_version = {CURRENT_VERSION}")
         con.commit()
@@ -586,3 +609,76 @@ def _migrate_5_to_6(con: sqlite3.Connection) -> None:
         raise RuntimeError(f"migration left dangling references: {violations[:5]}")
     con.commit()
     logger.info("migration: desktop and app-lock settings added")
+
+
+# --------------------------------------------------------------------------- #
+# 6 -> 7
+# --------------------------------------------------------------------------- #
+def _migrate_6_to_7(con: sqlite3.Connection) -> None:
+    """One column: may other devices on this network reach the application?
+
+    Defaults to off, and stays off for an existing database, for the same
+    reason `start_with_windows` does: there is no login here, so answering the
+    whole local network is a decision the user makes, never one an update makes
+    for them.
+    """
+    con.execute("BEGIN")
+    _add_column(con, "settings", "network_access", "BOOLEAN NOT NULL DEFAULT 0")
+
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+    logger.info("migration: the network-access setting was added")
+
+
+# --------------------------------------------------------------------------- #
+# 7 -> 8
+# --------------------------------------------------------------------------- #
+def _migrate_7_to_8(con: sqlite3.Connection) -> None:
+    """One column: should the application speak HTTPS?
+
+    Off by default, and off for an existing database. Turning it on means the
+    user has to trust a certificate on their phone, and that is a decision an
+    update has no business making for anybody.
+    """
+    con.execute("BEGIN")
+    _add_column(con, "settings", "https_enabled", "BOOLEAN NOT NULL DEFAULT 0")
+
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+    logger.info("migration: the HTTPS setting was added")
+
+
+# --------------------------------------------------------------------------- #
+# 8 -> 9
+# --------------------------------------------------------------------------- #
+def _migrate_8_to_9(con: sqlite3.Connection) -> None:
+    """One table, so two devices stop stealing each other's reminders.
+
+    `notifications.browser_delivered_at` marked a reminder as shown for the
+    whole application, so whichever browser polled first consumed it and every
+    other one never saw it. Each browser now keeps its own watermark.
+
+    Existing devices start from the highest notification there is, rather than
+    from zero: replaying a year of reminders at somebody the first time they
+    open the application after upgrading would be its own kind of failure.
+    """
+    con.execute("BEGIN")
+    con.execute(
+        """
+        CREATE TABLE IF NOT EXISTS browser_clients (
+            id VARCHAR(64) PRIMARY KEY,
+            last_notification_id INTEGER NOT NULL DEFAULT 0,
+            last_seen_at DATETIME
+        )
+        """
+    )
+
+    violations = con.execute("PRAGMA foreign_key_check").fetchall()
+    if violations:
+        raise RuntimeError(f"migration left dangling references: {violations[:5]}")
+    con.commit()
+    logger.info("migration: each browser now keeps its own place in the queue")

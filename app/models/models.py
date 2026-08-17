@@ -260,6 +260,28 @@ class AppointmentReminder(Base):
     appointment: Mapped["Appointment"] = relationship(back_populates="reminders")
 
 
+class BrowserClient(Base):
+    """One browser that shows reminders: the computer, the phone, a tablet.
+
+    Delivery used to be a single mark on the notification itself, so the first
+    device to ask for it took it and every other device never saw that reminder
+    at all. With the application open on a computer and a phone — which is the
+    whole point of the network access — that meant the phone silently stopped
+    being reminded of anything whenever the computer was awake.
+
+    So each browser keeps its own place in the queue. The id is a random string
+    the browser stores for itself; it identifies a screen, not a person, and
+    carries nothing else.
+    """
+
+    __tablename__ = "browser_clients"
+
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    # Everything up to and including this one has been shown here.
+    last_notification_id: Mapped[int] = mapped_column(Integer, default=0)
+    last_seen_at: Mapped[datetime | None] = mapped_column(DateTime)
+
+
 class Notification(Base):
     """Queue of notifications produced by the background scheduler.
 
@@ -384,6 +406,13 @@ class Settings(Base):
     # The registry entry is kept in step with this flag, so the switch really
     # controls the behaviour instead of only recording a preference.
     start_with_windows: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Off by default: there is no login, so answering the whole local network is
+    # something the user turns on knowing what it means (see Settings).
+    network_access: Mapped[bool] = mapped_column(Boolean, default=False)
+    # HTTPS with a certificate of our own. Off by default: it is what makes a
+    # phone able to show notifications at all, and it costs the user one
+    # deliberate act of trust on that phone.
+    https_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # --- app lock (v4) ---
     # An optional local privacy lock, not an account system. The PIN itself is
