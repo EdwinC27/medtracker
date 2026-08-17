@@ -135,6 +135,23 @@ def run_tick(db: Session, *, send_windows: bool = True, send_email: bool = True)
     summary["backup"] = _run_backup(db)
     _purge_old_notifications(db, settings.notification_history_days)
     db.commit()
+
+    # A dose going overdue, a treatment completing, a reminder arriving: nobody
+    # asked for any of it, so no request will announce it. Tell the open screens
+    # here instead, and only when something actually happened — a tick that
+    # found nothing to do must not make every device redraw itself every minute.
+    if any(
+        summary.get(key)
+        for key in (
+            "completed_medications", "extended_schedules", "missed_doses",
+            "dose_notifications", "snooze_notifications",
+            "appointment_notifications", "backup",
+        )
+    ):
+        from app.services import live
+
+        live.bump("scheduler tick")
+
     return summary
 
 
@@ -1029,21 +1046,51 @@ def _send_email_notifications(db: Session, settings) -> int:
     return sent
 
 
-def pending_for_browser(db: Session, language: str) -> list[dict]:
+def _browser_client(db: Session, client_id: str | None):
+    """The row that remembers where this browser got to. Created on first sight."""
+    from app.models.models import BrowserClient
+
+    if not client_id:
+        return None
+    client = db.get(BrowserClient, client_id)
+    if client is None:
+        # A device we have never seen starts from the notifications that are
+        # still current, not from the beginning of time — nobody wants a year
+        # of reminders replayed at them because they opened the application on
+        # a new phone.
+        client = BrowserClient(id=client_id, last_notification_id=_newest_id(db))
+        db.add(client)
+        db.flush()
+    return client
+
+
+def _newest_id(db: Session) -> int:
+    from sqlalchemy import func
+
+    return int(db.execute(select(func.coalesce(func.max(Notification.id), 0))).scalar() or 0)
+
+
+def pending_for_browser(db: Session, language: str, client_id: str | None = None) -> list[dict]:
+    """What this browser has not shown yet.
+
+    Per browser, not per application. A single `browser_delivered_at` on the
+    notification meant the first device to ask took the reminder and every
+    other device never saw it — so with the application open on a computer and
+    a phone, the phone quietly stopped being reminded of anything.
+    """
     cutoff = now_local() - timedelta(minutes=BROWSER_BACKLOG_MINUTES)
-    rows = (
-        db.execute(
-            select(Notification)
-            .where(
-                Notification.browser_delivered_at.is_(None),
-                Notification.fire_at >= cutoff,
-            )
-            .order_by(Notification.fire_at)
-            .limit(20)
-        )
-        .scalars()
-        .all()
-    )
+    stmt = select(Notification).where(Notification.fire_at >= cutoff)
+
+    client = _browser_client(db, client_id)
+    if client is not None:
+        client.last_seen_at = now_local()
+        stmt = stmt.where(Notification.id > client.last_notification_id)
+    else:
+        # No identity: an old cached page, or something that is not a browser.
+        # Fall back to the application-wide mark it used to use.
+        stmt = stmt.where(Notification.browser_delivered_at.is_(None))
+
+    rows = db.execute(stmt.order_by(Notification.fire_at).limit(20)).scalars().all()
     return [render_notification(row, language) for row in rows]
 
 
@@ -1114,14 +1161,47 @@ def cancel_pending_dose_notifications(db: Session, dose_ids: list[int]) -> int:
     return cancelled
 
 
-def mark_browser_delivered(db: Session, ids: list[int]) -> int:
+def mark_browser_delivered(db: Session, ids: list[int], client_id: str | None = None) -> int:
+    """Record that these were shown — on this device, if it said which it is."""
     if not ids:
         return 0
     rows = db.execute(select(Notification).where(Notification.id.in_(ids))).scalars().all()
+
+    client = _browser_client(db, client_id)
+    if client is not None:
+        client.last_notification_id = max(
+            [client.last_notification_id or 0] + [row.id for row in rows]
+        )
+        client.last_seen_at = now_local()
+
+    # Still kept, and still what tells the notification centre a reminder
+    # reached *a* browser. It is no longer what decides who gets to see it.
     for row in rows:
-        row.browser_delivered_at = now_local()
+        if row.browser_delivered_at is None:
+            row.browser_delivered_at = now_local()
     db.flush()
     return len(rows)
+
+
+def forget_idle_browsers(db: Session, days: int = 90) -> int:
+    """Drop devices that have not asked for anything in months."""
+    from app.models.models import BrowserClient
+
+    cutoff = now_local() - timedelta(days=days)
+    stale = (
+        db.execute(
+            select(BrowserClient).where(
+                BrowserClient.last_seen_at.is_not(None),
+                BrowserClient.last_seen_at < cutoff,
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for client in stale:
+        db.delete(client)
+    db.flush()
+    return len(stale)
 
 
 # --------------------------------------------------------------------------- #
