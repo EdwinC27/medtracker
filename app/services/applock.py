@@ -27,7 +27,7 @@ import hashlib
 import hmac
 import logging
 import secrets
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
 from app.services.errors import ValidationError
@@ -91,17 +91,28 @@ class _Session:
     In memory on purpose: the specification asks the application to lock when it
     starts, and a state that does not survive the process gives that for free.
 
-    `token` is what makes the unlock belong to the browser that typed the PIN
-    rather than to the process. It is a fresh random string on every unlock,
-    handed back in an HttpOnly cookie and never written anywhere — so it dies
-    with the process, exactly like the rest of this state.
+    `tokens` is what makes an unlock belong to the browser that typed the PIN
+    rather than to the process. Each unlock mints a fresh random string, handed
+    back in an HttpOnly cookie and never written anywhere — so they die with the
+    process, exactly like the rest of this state.
+
+    A *set* of them, not one, because the same person legitimately uses two
+    browsers at once: the computer and their phone on the same network. Holding
+    a single token meant entering the PIN on the phone silently threw the
+    computer back to the lock screen, and entering it there threw the phone out
+    again. Locking — by hand, by the idle timer, or by closing the application —
+    clears all of them at once, which is the property that actually matters.
     """
 
     unlocked: bool = False
     since: datetime | None = None
     last_seen: datetime | None = None
-    token: str | None = None
+    tokens: list[str] = field(default_factory=list)
 
+
+# How many browsers may hold an unlock at the same time. Generous for one
+# household, and bounded so a stream of unlocks cannot grow this without limit.
+MAX_UNLOCKED_CLIENTS = 8
 
 _session = _Session()
 
@@ -115,24 +126,30 @@ def reset_for_tests() -> None:
 
 
 def unlock() -> str:
-    """Unlock, and return the token that proves it to one browser."""
+    """Unlock, and return the token that proves it to this one browser."""
     now = now_local()
     _session.unlocked = True
-    _session.since = now
+    _session.since = _session.since or now
     _session.last_seen = now
-    _session.token = secrets.token_urlsafe(32)
-    return _session.token
+    token = secrets.token_urlsafe(32)
+    _session.tokens.append(token)
+    del _session.tokens[:-MAX_UNLOCKED_CLIENTS]
+    return token
 
 
 def lock() -> None:
     _session.unlocked = False
     _session.since = None
     _session.last_seen = None
-    _session.token = None
+    _session.tokens.clear()
 
 
 def current_token() -> str | None:
-    return _session.token
+    return _session.tokens[-1] if _session.tokens else None
+
+
+def _token_is_valid(token: str) -> bool:
+    return any(hmac.compare_digest(token, known) for known in _session.tokens)
 
 
 def touch() -> None:
@@ -167,9 +184,7 @@ def is_locked(settings, reference: datetime | None = None, token: str | None = N
             logger.info("Locked after %s minutes of inactivity", minutes)
             return True
 
-    if token is not None and not (
-        _session.token and hmac.compare_digest(token, _session.token)
-    ):
+    if token is not None and not _token_is_valid(token):
         return True
     return False
 
