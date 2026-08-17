@@ -7,11 +7,11 @@ REM Produces dist\Medication Organizer\Medication Organizer.exe together with
 REM everything it needs. Copy that whole folder wherever you want the
 REM application to live.
 REM
-REM The folder holds the program and NOTHING of yours: the packaged application
-REM keeps its database, backups, exports and photographs in
-REM %LOCALAPPDATA%\MedTracker\data, so rebuilding or replacing this folder can
-REM never delete them. On its first run it copies an existing installation's
-REM data across and leaves the original where it is.
+REM The folder holds the program and NOTHING of yours. The packaged application
+REM uses the SAME data folder as scripts\start.bat, so both ways of starting it
+REM show the same medications; it finds the installation next to it on its first
+REM run and remembers where it went in %LOCALAPPDATA%\MedTracker. Rebuilding or
+REM replacing this folder can never touch your database.
 
 setlocal
 cd /d "%~dp0.."
@@ -54,8 +54,7 @@ echo   dist\Medication Organizer\Medication Organizer.exe
 echo.
 echo Copy the whole "Medication Organizer" folder to where you want it to live.
 echo.
-echo Your data does NOT live in that folder. The packaged application keeps it in
-echo   %%LOCALAPPDATA%%\MedTracker\data
-echo and on its first run it copies your existing C:\ProyectoPersonal\data across,
-echo leaving the original exactly where it is. Rebuilding never touches either.
+echo Run it once from dist\ before moving it anywhere: on that first run it finds
+echo your existing data folder and writes down where it is, so the .exe and
+echo scripts\start.bat share one database. Rebuilding never touches your data.
 endlocal

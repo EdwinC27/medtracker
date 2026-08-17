@@ -12,6 +12,11 @@ reportlab>=4.0,<5
 # Windows desktop toasts (installed only on Windows)
 winotify>=1.1.0; sys_platform == "win32"
 
+# HTTPS on the local network (v4). Only a secure page may ask a phone for
+# notification permission, and no public authority issues certificates for
+# 192.168.x.x — so the application makes its own.
+cryptography>=42.0
+
 # Desktop shell (v4): the system tray icon and the image it is drawn from.
 # Optional at run time — without them the application still runs, just without
 # a tray icon — but required to build the Windows executable.

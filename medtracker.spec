@@ -10,8 +10,9 @@ icon. Nothing the application *writes* is in here.
 That distinction is the whole point. This folder is replaced wholesale by the
 next build, so anything of the user's inside it would be destroyed by an
 upgrade. The frozen application therefore keeps its database, backups, exports,
-logs and uploaded photographs under %LOCALAPPDATA%\\MedTracker — see the
-docstring of `app/config.py` — and this recipe bundles no `data/` folder and,
+logs and uploaded photographs elsewhere — normally the very same `data/` folder
+the source installation uses, so the two never drift apart; see the docstring of
+`app/config.py` — and this recipe bundles no `data/` folder and,
 explicitly, no `static/uploads/`, which would otherwise ship the developer's own
 medication photographs to everyone who installs it.
 
@@ -60,6 +61,7 @@ hiddenimports = [
     "app.desktop.messages",
     "app.utils.datamove",
     "app.utils.streams",
+    "app.services.certificates",
     "winotify",
     "pystray._win32",
     # uvicorn resolves these by name at run time.
