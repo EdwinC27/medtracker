@@ -68,7 +68,11 @@ run locally on Windows.
   tray menu, no console window — and a **Start with Windows** switch that
   registers itself properly and can be verified.
 - A read-only **System status** page: is the scheduler running, when was the last
-  backup, is e-mail configured, is anything broken.
+  backup, is e-mail configured, is anything broken — and which address to open
+  on your phone.
+- **Use it from your phone** on the same Wi-Fi, with the same data. Every open
+  screen updates itself within about a second of anything changing, on either
+  device.
 - An optional **app lock**: a PIN that hides everything until it is entered, with
   automatic locking after an idle period you choose.
 
@@ -131,14 +135,19 @@ notification area, with **Open**, **System status**, **Lock application** and
 process, so *Exit* really does stop everything and closing the browser stops
 nothing.
 
-> **Your data is not inside that folder.** The build folder is replaced
-> wholesale every time you rebuild, so the packaged application keeps its
-> database, backups, exports and photographs in
-> `%LOCALAPPDATA%\MedTracker\data` instead. Rebuilding, moving or deleting the
-> program folder cannot touch them. The first time you run the `.exe` on a
-> machine that has been using the source install, it copies the existing
-> database and photographs across for you and leaves the originals exactly
-> where they are.
+> **Your data is not inside that folder, and there is only one of it.** The
+> build folder is replaced wholesale every time you rebuild, so nothing of
+> yours is kept there. The packaged application uses the **same** `data\` folder
+> as `scripts\start.bat` — it looks for the installation next to it on its
+> first run and writes down where it went, in a note under
+> `%LOCALAPPDATA%\MedTracker`, so you can move or rebuild the program folder
+> afterwards and it still finds it. Start it either way and you are looking at
+> the same medications. Only on a machine with no source installation does it
+> keep its own data under `%LOCALAPPDATA%\MedTracker\data`.
+>
+> Run the newly built `.exe` once from `dist\` before moving it, so it can find
+> the installation and take that note. *Settings → System status* always shows
+> the exact database file in use, if you ever want to check.
 
 If a start fails, you get a message box naming the step that failed — data
 folder, network port, web server, database or scheduler — and what to do about
@@ -173,20 +182,47 @@ By default the application listens **only on this computer** (`127.0.0.1:8000`).
 That is deliberate: there is no login, so anything that can reach the port sees
 everything.
 
-To reach it from a phone, start it with the address to listen on:
+**Turn it on in *Settings → General → Allow access from other devices on my
+network*, and restart the application.** The port is claimed before the setting
+can be read, so a change takes effect on the next start — *Settings → System
+status* says so while that is pending, and once it is running it lists the
+addresses to type into the phone, so you never have to run `ipconfig` and guess
+which of the four answers is the right one.
 
-```bat
-set MEDTRACKER_HOST=0.0.0.0
-scripts\start.bat
+The first time, Windows will probably block the connection. Open PowerShell **as
+administrator**, once:
+
+```powershell
+New-NetFirewallRule -DisplayName "MedTracker" -Direction Inbound `
+  -Action Allow -Protocol TCP -LocalPort 8000 -Profile Private
 ```
 
-Then find your PC's address with `ipconfig` and open `http://<your-pc-ip>:8000`.
-The first time, Windows will ask you to allow Python on private networks. The
-interface is responsive and works well on a phone screen.
+Running from source, `scripts\start_network.bat` does the same thing for one
+run without touching the setting, and prints the addresses itself. An explicit
+`--host` on the shortcut, or `MEDTRACKER_HOST` in the environment, always wins
+over the switch — in either direction.
 
-> Do not expose the port to the internet, and remember that the app lock is
-> per-browser: opening it up means anyone on that network who knows the address
-> can see your record until they are asked for the PIN.
+**Everything stays in step by itself.** It is one process and one database, so
+the phone and the computer are two windows onto the same rows: marking a dose on
+the phone updates the computer's screen in about a second, without anybody
+pressing refresh, and the other way round. That also covers what the application
+does on its own — a dose going overdue, or a reminder arriving, appears on both.
+A screen will not reload itself while a dialog is open or while the cursor is in
+a field, so it cannot pull a half-filled form out from under you.
+
+Two things worth knowing before you switch it on:
+
+* **Turn on the PIN.** Without it, anyone on that Wi-Fi who opens the address
+  sees your whole record. With it, the phone is asked for the PIN separately
+  from the computer, and both can be unlocked at the same time — unlocking on
+  one does not throw the other out. Locking, whether by hand, by the idle timer
+  or by closing the application, locks every device at once.
+* **It is plain HTTP on your own network.** Fine at home; not something to do on
+  café Wi-Fi, and never something to forward to the internet.
+
+If the address stops working it is usually because your router gave the computer
+a different one. Open *System status* and read the new one, or give the computer
+a fixed address in the router.
 
 ## 5. The screens
 
@@ -201,7 +237,7 @@ interface is responsive and works well on a phone screen.
 | **History** | Two tabs: the *medical timeline* — every appointment in order with its doctor, medications and follow-ups — and the medication history. |
 | **Notifications** | Everything the application has generated, read and unread. Reached from the bell. |
 | **Search** | One box over medications, doctors and appointments. Every result is a link. |
-| **Settings** | Three tabs. **General**: language, appearance, the first dose time, every reminder switch, e-mail, backups, export and import, and *Start with Windows*. **Security**: the optional app lock. **System status**: a read-only page saying what is and is not working. |
+| **Settings** | Three tabs. **General**: language, appearance, the first dose time, every reminder switch, e-mail, backups, export and import, *Start with Windows* and network access. **Security**: the optional app lock. **System status**: a read-only page saying what is and is not working, including the addresses to open on your phone. |
 | **Lock** | The only screen served while the application is locked. A PIN box and nothing else — no names, no doses, no dates. |
 
 ### Appearance
@@ -339,6 +375,69 @@ Windows), the Settings screen says so and everything else keeps working.
 2. Accept the permission prompt.
 3. If you blocked it earlier you have to allow it again in the browser's site
    settings; the Settings screen tells you when that is the case.
+
+#### On a phone: the notification bar, or the screen
+
+The phone reaches the application at an address like `192.168.1.9:8000`, and
+what the browser will let it do depends entirely on one thing — whether that
+address is served over HTTPS.
+
+**Over plain `http://`** the address is not what browsers call a *secure
+context*. On such a page the browser refuses to grant notification permission at
+all, and there is no service worker to show one through. Measured in a real
+browser over a real address, not assumed. So the phone gets an **on-screen
+reminder** instead: a banner that does not disappear on its own, with a sound
+and a vibration, about a second after the reminder is due. Better than nothing,
+and only visible while the page is open.
+
+**Over `https://`** — *Settings → General → Use HTTPS* — the phone gets the
+real thing: the browser asks "Allow notifications?", and from then on reminders
+land in the **notification bar**, where you see them from any other app.
+
+Turning HTTPS on makes the application generate two certificates of its own,
+because no public authority will ever issue one for `192.168.1.9`: an authority,
+made once, and a server certificate signed by it that is reissued automatically
+whenever your router changes the computer's address. Only the authority's
+certificate is ever served, at `/api/certificate`; the private keys stay in
+`data\certs` and are never reachable over the network.
+
+The one thing that cannot be automated is trusting it on the phone. Do it in
+this order, which is the one that avoids every browser warning:
+
+1. **On the phone, while the application is still on plain http**, open
+   `http://<your-pc>:8000/certificate`. The page hands you the certificate and
+   explains the rest. Install it: **Settings → Security → Encryption and
+   credentials → Install a certificate → CA certificate**, and pick
+   `medtracker-ca.crt` from Downloads.
+2. **On the computer**, switch on *Settings → General → Use HTTPS* and restart
+   the application.
+3. **On the phone**, open `https://<your-pc>:8000`. There should be no warning
+   at all now — that is how you know the certificate took. Enter your PIN.
+4. *Settings → Notifications → Allow notifications*, and accept the browser's
+   prompt. Test it with the button beside it.
+
+Doing it the other way round works too, but then step 1 happens behind a "your
+connection is not private" warning and Chrome will ask whether to *Discard* or
+*Keep* the download — keep it; the file being downloaded is the very thing that
+makes the connection trusted. The certificate is created the first time anyone
+asks for it, so it is there whichever order you choose.
+
+The honest limits, in order of how likely you are to meet them:
+
+* Reminders arrive while the browser is **running** with the page open, even in
+  the background — not with Chrome fully closed. Waking a closed browser needs
+  Web Push, which routes through Google's servers on the internet, and this
+  application does not use the cloud.
+* **iPhone cannot do this at all** on a local network: iOS requires the page to
+  be installed to the Home Screen *and* uses Web Push, so a local certificate
+  does not help. An iPhone gets the on-screen reminder and e-mail.
+* With everything on the phone closed, the channel that still reaches you is
+  **e-mail**, which your phone's mail app notifies you about. That is what
+  e-mail is there for.
+
+The same certificate file can be installed on Windows (double-click → install to
+*Trusted Root Certification Authorities*) if you would rather the computer's own
+browser stopped warning you too.
 
 ### One conversation per dose
 
@@ -794,11 +893,12 @@ taken before you turned the lock on.
 is **read-only** — it reports, it never sends a test notification, writes a
 backup or changes a setting.
 
-Nine cards, each green, amber, red or grey: the application (version, how long
-it has been up), the database (schema version, where the file is), the
-notification scheduler (last run, next run, the next dose it is waiting for),
-Windows notifications, browser notifications, e-mail notifications, backups (when
-the last one was, when the next is due, and why the last one failed if it did),
+Ten cards, each green, amber, red or grey: the application (version, how long it
+has been up), the database (schema version, where the file is), the notification
+scheduler (last run, next run, the next dose it is waiting for), Windows
+notifications, browser notifications, e-mail notifications, backups (when the
+last one was, when the next is due, and why the last one failed if it did),
+network access (what it is listening on, and the addresses for your phone),
 Start with Windows, and the app lock.
 
 The colours are not decoration. Grey means *switched off on purpose*. Amber means
@@ -891,6 +991,7 @@ C:\ProyectoPersonal
 │   │   ├── pages.py            HTML pages
 │   │   ├── lock.py             the app lock, enforced in one middleware
 │   │   ├── lock_cache.py       so that check costs nothing when unused
+│   │   ├── events.py           the change stream every open screen listens to
 │   │   ├── origin.py           refuses requests other websites make for you
 │   │   └── deps.py             language resolution
 │   ├── services/
@@ -908,11 +1009,13 @@ C:\ProyectoPersonal
 │   │   ├── import_service.py   JSON import (full replace)
 │   │   ├── textformat.py       server-side date and dose formatting
 │   │   ├── applock.py          the PIN: hashing, attempts, auto-lock
+│   │   ├── live.py             one number, bumped whenever anything is written
 │   │   ├── system_status.py    the read-only diagnostic page
 │   │   └── errors.py           domain errors
 │   ├── desktop/
 │   │   ├── __main__.py         `Medication Organizer.exe` — argument handling
 │   │   ├── launcher.py         the start sequence, step by step
+│   │   ├── network.py          which address to listen on, decided before start
 │   │   ├── startup.py          the Windows "Run" registry entry
 │   │   ├── tray.py             the notification-area icon
 │   │   └── messages.py         what a failed start says, before the UI exists
@@ -933,7 +1036,7 @@ C:\ProyectoPersonal
 │                                when running the packaged .exe)
 ├── desktop.py                  entry point for the packaged application
 ├── medtracker.spec             PyInstaller recipe
-├── scripts/                    install / start / stop / autostart / build / tests
+├── scripts/                    install / start / start_network / stop / autostart / build / tests
 ├── tests/
 ├── requirements.txt
 └── README.md
@@ -949,9 +1052,18 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
   is off or the process is stopped, there are no alerts — which is exactly why
   the auto-start task exists.
 - Browser notifications only appear while the app is open in a tab. The reliable
-  channel with everything closed is the Windows one. Web Push is not used
-  because it would need an external service, which is out of proportion for a
-  local application.
+  channel with everything closed is the Windows one, and e-mail. Web Push is not
+  used because it would need an external service on the internet, which is both
+  out of proportion for a local application and against the "no cloud" rule this
+  one is built to.
+- A phone gets notifications in its notification bar only over HTTPS with the
+  certificate trusted, and only while its browser is running — see section 6. On
+  plain http it gets the on-screen reminder instead. An iPhone cannot do either
+  on a local network. With the phone's browser closed, e-mail is the channel
+  that reaches it.
+- The certificate is one the application signs itself. That is unavoidable for a
+  private address, and it is why trusting it is a deliberate step rather than
+  something that happens quietly.
 - No accounts and no encryption. The optional app lock (section 10.3) stops
   somebody picking up your running computer; it does not protect the database
   file itself, which anyone with a SQLite viewer can still read.
@@ -1032,7 +1144,7 @@ JavaScript fetches the data from the API and renders it. One stylesheet.
 | You forgot the PIN | There is no recovery. Restore a backup from before you turned the lock on (*Settings → Backup*), or delete `data\medtracker.db` if you are willing to lose everything. |
 | It locks while you are using it | *Settings → Security → Lock automatically* is set too short, or the browser tab was left open without being touched. Set it to *Never* if you do not want it. |
 | The app does not start with Windows although the switch is on | *Settings → System status* → the **Start with Windows** card says whether the entry exists and whether it still points at a program that is there. Turning the switch off and on again rewrites it. |
-| The phone cannot reach it | v4 listens only on this computer by default. See "From your phone, on the same network" in section 4. |
+| The phone cannot reach it | v4 listens only on this computer by default. Use `scripts\start_network.bat`, and add the firewall rule it prints. See section 4. |
 | No Windows toasts | Check Focus assist, check that the option is on in Settings, and try the test notification button. |
 | The browser does not notify | The permission is blocked: fix it in the browser's site settings. |
 | Settings says the scheduler is stopped | The page is open but the process died; start it again. |
