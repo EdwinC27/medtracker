@@ -101,7 +101,9 @@ class ServerHandle:
     def url(self) -> str:
         # Whatever the server is bound to, the local UI talks to the loopback
         # address — and by default that is also all it is bound to.
-        return f"http://127.0.0.1:{self.port}"
+        from app.desktop.network import scheme
+
+        return f"{scheme()}://127.0.0.1:{self.port}"
 
     def bind(self) -> None:
         """Claim the port first, and only then let anything else happen.
@@ -148,9 +150,20 @@ class ServerHandle:
         # No reloader, no dev server: the packaged application runs the same
         # ASGI app through a plain uvicorn Server object, on the socket that is
         # already ours.
+        options = {}
+        from app.desktop.network import https_enabled
+
+        if https_enabled():
+            from app.services.certificates import ensure
+
+            bundle = ensure()
+            options["ssl_certfile"] = str(bundle.certificate)
+            options["ssl_keyfile"] = str(bundle.key)
+            logger.info("Serving TLS with %s", bundle.certificate)
+
         config = uvicorn.Config(
             app, host=self.host, port=self.port, log_level="info",
-            access_log=False, lifespan="on", log_config=None,
+            access_log=False, lifespan="on", log_config=None, **options,
         )
         self._server = uvicorn.Server(config)
         sock = self._socket
@@ -189,11 +202,21 @@ class ServerHandle:
 # Probing
 # --------------------------------------------------------------------------- #
 def probe(url: str, timeout: float = 2.0) -> dict | None:
-    """Ask the health endpoint who is there. None if nobody answers."""
-    import json
+    """Ask the health endpoint who is there. None if nobody answers.
 
+    The certificate check is deliberately skipped. This is the application
+    asking itself, over the loopback address, whether it is up; the certificate
+    is one we issued to ourselves minutes ago, and refusing to talk to it would
+    only mean reporting a healthy application as dead.
+    """
+    import json
+    import ssl
+
+    context = ssl._create_unverified_context() if url.startswith("https") else None
     try:
-        with urllib.request.urlopen(f"{url}/api/health", timeout=timeout) as response:
+        with urllib.request.urlopen(
+            f"{url}/api/health", timeout=timeout, context=context
+        ) as response:
             return json.loads(response.read().decode("utf-8"))
     except (urllib.error.URLError, OSError, ValueError, TimeoutError):
         return None
@@ -218,7 +241,9 @@ def already_running(port: int = PORT) -> dict | None:
     Two copies would mean two schedulers and two sets of reminders, so a second
     launch hands over to the first instead of starting anything.
     """
-    return probe(f"http://127.0.0.1:{port}", timeout=1.0)
+    from app.desktop.network import scheme
+
+    return probe(f"{scheme()}://127.0.0.1:{port}", timeout=1.0)
 
 
 # --------------------------------------------------------------------------- #
@@ -271,6 +296,7 @@ def start_application(host: str, port: int, *, open_ui: bool = True) -> tuple[St
     handle = ServerHandle(host, port)
     try:
         handle.bind()
+        system_status.mark_bound(host)
         report.add("port", True, detail=str(port))
     except PortInUse as exc:
         report.add("port", False, detail=str(exc))

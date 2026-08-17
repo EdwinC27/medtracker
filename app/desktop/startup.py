@@ -69,7 +69,24 @@ def launch_command() -> str:
     from app.config import PROJECT_ROOT
 
     script = PROJECT_ROOT / "desktop.py"
-    return f'"{Path(sys.executable)}" "{script}" {BACKGROUND_FLAG}'
+    return f'"{_windowless_interpreter()}" "{script}" {BACKGROUND_FLAG}'
+
+
+def _windowless_interpreter() -> Path:
+    """`pythonw.exe` where there is one, otherwise `python.exe`.
+
+    The whole promise of starting with Windows is that reminders work without
+    anything being in the way. Registering `python.exe` keeps that promise and
+    breaks the spirit of it: a black console window opens at every single logon
+    and sits there until it is closed — which most people will do, taking the
+    reminders with it. `pythonw.exe` is the same interpreter with no console.
+    """
+    interpreter = Path(sys.executable)
+    if interpreter.name.lower() == "python.exe":
+        windowless = interpreter.with_name("pythonw.exe")
+        if windowless.is_file():
+            return windowless
+    return interpreter
 
 
 # --------------------------------------------------------------------------- #

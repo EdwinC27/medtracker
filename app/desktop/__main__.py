@@ -116,8 +116,19 @@ def main(argv: list[str] | None = None) -> int:
                         help="start without opening the interface (used at Windows logon)")
     parser.add_argument("--no-tray", action="store_true", help="do not show a tray icon")
     parser.add_argument("--port", type=int, default=PORT)
-    parser.add_argument("--host", default=HOST)
+    # No default: "not given" has to be distinguishable from "given, and it
+    # happens to be the same address", because only then can the stored
+    # Settings switch decide. An explicit --host still wins over the setting.
+    parser.add_argument("--host", default=None)
     args = parser.parse_args(argv)
+
+    from app.desktop.network import host_to_bind, scheme
+
+    requested = args.host
+    if requested is None and HOST != "127.0.0.1":
+        # MEDTRACKER_HOST was set in the environment; that is explicit too.
+        requested = HOST
+    host = host_to_bind(requested)
 
     # Already running? Hand over to that instance instead of starting a second
     # scheduler that would double every reminder.
@@ -126,11 +137,11 @@ def main(argv: list[str] | None = None) -> int:
         logger.info("Already running (v%s); opening the existing instance",
                     existing.get("version"))
         if not args.background:
-            launcher.open_browser(f"http://127.0.0.1:{args.port}")
+            launcher.open_browser(f"{scheme()}://127.0.0.1:{args.port}")
         return 0
 
     report, handle = launcher.start_application(
-        args.host, args.port, open_ui=not args.background
+        host, args.port, open_ui=not args.background
     )
 
     if not report.ok:
@@ -178,9 +189,9 @@ def main(argv: list[str] | None = None) -> int:
     from app.desktop.tray import Tray
 
     tray = Tray(
-        on_open=lambda: launcher.open_browser(report.url or f"http://127.0.0.1:{args.port}"),
+        on_open=lambda: launcher.open_browser(report.url or f"{scheme()}://127.0.0.1:{args.port}"),
         on_status=lambda: launcher.open_browser(
-            f"{report.url or f'http://127.0.0.1:{args.port}'}/settings?tab=status"
+            f"{report.url or f'{scheme()}://127.0.0.1:{args.port}'}/settings?tab=status"
         ),
         on_lock=_lock_now,
         on_exit=lambda: shutdown(handle),
