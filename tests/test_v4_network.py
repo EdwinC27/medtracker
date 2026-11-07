@@ -126,12 +126,94 @@ def test_the_status_page_says_where_to_point_the_phone(db, monkeypatch):
     monkeypatch.setattr(
         "app.desktop.network.local_addresses", lambda: ["192.168.1.9"]
     )
+    # The real hostname would make this assertion a fact about whichever
+    # machine happens to run the suite, which is how two builds have already
+    # been blocked. Pin it.
+    monkeypatch.setattr("app.services.certificates.host_names", lambda: [])
 
     row = system_status._network(settings)
     assert row["level"] == "ok"
     assert row["detail_key"] == "status.network_open"
     assert row["addresses"] == ["http://192.168.1.9:8000"]
     assert row["restart_required"] is False
+
+
+def test_the_status_page_offers_the_machine_name_before_the_numbers(db, monkeypatch):
+    """The address a phone should be given is the one that does not change.
+
+    A home router re-issues this computer a different number on its own, and to
+    a browser a different number is a different website: the notification
+    permission, the installed application and the session all belonged to the
+    old one. The name survives that, so it is offered first — with the numbers
+    still listed underneath, because whether `.local` resolves depends on the
+    network and must not be the only way in.
+    """
+    from app.services import system_status
+
+    settings = get_settings(db)
+    settings.network_access = True
+    db.flush()
+
+    monkeypatch.setattr(system_status, "_bound_host", "0.0.0.0")
+    monkeypatch.setattr("app.desktop.network.local_addresses", lambda: ["192.168.1.9"])
+    monkeypatch.setattr(
+        "app.services.certificates.host_names", lambda: ["Edwin-PC", "Edwin-PC.local"]
+    )
+
+    row = system_status._network(settings)
+    assert row["addresses"] == [
+        "http://Edwin-PC.local:8000",
+        "http://192.168.1.9:8000",
+    ]
+
+
+def test_the_machine_name_is_offered_in_the_form_a_phone_can_resolve(monkeypatch):
+    """The bare name is what Windows itself uses; only the `.local` form is
+    resolvable from another device, so only that one is worth showing."""
+    from app.services import system_status
+
+    monkeypatch.setattr("app.desktop.network.local_addresses", lambda: [])
+    monkeypatch.setattr("app.desktop.network.https_enabled", lambda: True)
+    monkeypatch.setattr(
+        "app.services.certificates.host_names", lambda: ["Edwin-PC", "Edwin-PC.local"]
+    )
+
+    assert system_status._reachable_at() == ["https://Edwin-PC.local:8000"]
+
+
+def test_the_real_hostname_is_reported_without_its_domain(monkeypatch):
+    """A machine joined to a domain answers `gethostname()` with the full name.
+    Putting that in a certificate would name an address nothing on the local
+    network resolves, so it is cut back to the label the router knows."""
+    from app.services import certificates
+
+    monkeypatch.setattr("socket.gethostname", lambda: "Edwin-Castillo.lan.example")
+    assert certificates.host_names() == ["Edwin-Castillo", "Edwin-Castillo.local"]
+
+    monkeypatch.setattr("socket.gethostname", lambda: "")
+    assert certificates.host_names() == []
+
+
+def test_the_host_guard_answers_to_this_machines_own_name(monkeypatch):
+    """Reaching the application by name is pointless if the cross-site guard
+    then refuses the name — which it would, since a name it has never heard of
+    is exactly the shape DNS rebinding takes. Only the `.local` form, and only
+    under TLS; `tests/test_v4_away.py` covers why."""
+    from app.routes import origin
+
+    monkeypatch.setattr(
+        "app.services.certificates.host_names", lambda: ["Edwin-PC", "Edwin-PC.local"]
+    )
+    monkeypatch.setattr("app.desktop.network.https_enabled", lambda: True)
+    origin.forget_tls()
+
+    assert origin.is_acceptable_host("Edwin-PC.local:8000")
+    assert origin.is_acceptable_host("EDWIN-PC.LOCAL:8000")   # names are caseless
+    assert origin.is_acceptable_host("127.0.0.1:8000")
+    assert origin.is_acceptable_host("192.168.1.9:8000")      # a number cannot rebind
+    assert not origin.is_acceptable_host("Edwin-PC")          # LLMNR answers this
+    assert not origin.is_acceptable_host("evil.example:8000")
+    assert not origin.is_acceptable_host("")
 
 
 def test_the_status_page_says_when_a_restart_is_needed(db, monkeypatch):

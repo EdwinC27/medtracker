@@ -32,7 +32,18 @@ from app.services.settings_service import get_settings
 # --------------------------------------------------------------------------- #
 @pytest.fixture()
 def certs(tmp_path, monkeypatch):
+    """A certificate folder — and a machine, pinned.
+
+    Every test here builds a real certificate, and `ensure()` asks the machine
+    for its addresses and its name. Left unpinned that is a real UDP socket, a
+    real `getaddrinfo` and this computer's own name inside the certificate:
+    green on Linux, and on Windows dependent on the network and on whether the
+    computer's name happens to contain an accent. Pinning it in the fixture
+    means no test here can forget.
+    """
     monkeypatch.setattr("app.config.DATA_DIR", tmp_path)
+    monkeypatch.setattr("app.desktop.network.local_addresses", lambda: ["192.168.1.9"])
+    monkeypatch.setattr("app.services.certificates.host_names", lambda: ["test-pc", "test-pc.local"])
     return tmp_path / "certs"
 
 
@@ -72,6 +83,44 @@ def test_a_new_address_reissues_the_certificate_but_not_the_authority(certs, mon
     assert bundle.ca_certificate.read_bytes() == authority, "the phone would need re-trusting"
     assert bundle.certificate.read_bytes() != first
     assert "192.168.1.44" in certificates.certificate_names(bundle.certificate)
+
+
+def test_the_certificate_names_this_machine_so_the_name_can_be_used(certs, monkeypatch):
+    """The name is the address that survives the router changing the number,
+    but a browser refuses an address the certificate does not name — so if the
+    name is missing from here, reaching the app by name fails with a security
+    warning and the stable address is no address at all."""
+    from app.services import certificates
+
+    monkeypatch.setattr("app.desktop.network.local_addresses", lambda: ["192.168.1.9"])
+    monkeypatch.setattr(
+        "app.services.certificates.host_names", lambda: ["Edwin-PC", "Edwin-PC.local"]
+    )
+    bundle = certificates.ensure()
+
+    names = certificates.certificate_names(bundle.certificate)
+    assert "Edwin-PC" in names
+    assert "Edwin-PC.local" in names
+
+
+def test_a_certificate_made_before_the_name_was_known_is_reissued(certs, monkeypatch):
+    """His certificate already exists, made when the name was not in it. Nothing
+    would prompt him to notice; the reissue has to happen by itself."""
+    from app.services import certificates
+
+    monkeypatch.setattr("app.desktop.network.local_addresses", lambda: ["192.168.1.9"])
+    monkeypatch.setattr("app.services.certificates.host_names", lambda: [])
+    bundle = certificates.ensure()
+    authority = bundle.ca_certificate.read_bytes()
+    assert "Edwin-PC.local" not in certificates.certificate_names(bundle.certificate)
+
+    monkeypatch.setattr(
+        "app.services.certificates.host_names", lambda: ["Edwin-PC", "Edwin-PC.local"]
+    )
+    certificates.ensure()
+
+    assert "Edwin-PC.local" in certificates.certificate_names(bundle.certificate)
+    assert bundle.ca_certificate.read_bytes() == authority, "the phone would need re-trusting"
 
 
 def test_the_authority_is_a_certificate_authority_and_the_server_one_is_not(certs):
@@ -214,6 +263,8 @@ def test_the_status_page_says_whether_the_phone_can_be_notified(db, monkeypatch)
     db.flush()
     monkeypatch.setattr(system_status, "_bound_host", "0.0.0.0")
     monkeypatch.setattr("app.desktop.network.local_addresses", lambda: ["192.168.1.9"])
+    # Otherwise this asserts a fact about whichever machine runs the suite.
+    monkeypatch.setattr("app.services.certificates.host_names", lambda: [])
 
     monkeypatch.setattr("app.desktop.network.https_enabled", lambda: False)
     row = system_status._network(settings)

@@ -27,6 +27,37 @@ from app.models.models import Base  # noqa: E402
 from app.services.settings_service import ensure_settings  # noqa: E402
 
 
+@pytest.fixture(autouse=True)
+def _clean_process_wide_state(monkeypatch):
+    """Three module-level caches emptied around every test — and no PowerShell.
+
+    Each cache is a deliberate performance decision — the last device that
+    connected, whether the network is public, whether TLS is on — and each is
+    process-wide, so without this a test's result depends on what ran before
+    it. Every `TestClient` request writes to the first of them.
+
+    The network profile is pinned off for the whole suite as well. Left alone,
+    a test that renders the status page really does run `Get-NetConnectionProfile`
+    on the machine running the tests, and the answer decides whether the row is
+    `ok` or `warning` — green on Linux, and on Windows dependent on which Wi-Fi
+    the laptop happens to be joined to. That failed his build once already.
+    A test that wants a profile says so itself.
+    """
+    from app.desktop import netprofile
+    from app.routes import origin
+    from app.services import reach
+
+    def clear():
+        reach.forget()
+        netprofile.forget()
+        origin.forget_tls()
+
+    clear()
+    monkeypatch.setattr(netprofile, "supported", lambda: False)
+    yield
+    clear()
+
+
 @pytest.fixture()
 def db():
     """An isolated in-memory database session."""

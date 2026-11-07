@@ -112,6 +112,64 @@
     list.appendChild(el('dd', null, String(value)));
   }
 
+  function profileText(profile) {
+    // A nameless network of unknown kind has nothing to say, and `fact()` drops
+    // an empty value — which is the right outcome, but only by accident, so it
+    // is made explicit here.
+    if (!profile.name && profile.category === 'unknown') return null;
+    const key = 'status.network_profile_' + (profile.category || 'unknown');
+    return T.t(key, { name: profile.name || '' });
+  }
+
+  function ago(iso) {
+    // Timestamps are naive local wall-clock throughout the application, which
+    // is exactly how a browser parses a string with no zone. No conversion.
+    const then = new Date(iso);
+    if (isNaN(then.getTime())) return null;
+    const seconds = Math.max(0, Math.round((Date.now() - then.getTime()) / 1000));
+    if (seconds < 60) return T.t('status.ago_seconds', { seconds: seconds });
+    if (seconds < 3600) return T.t('status.ago_minutes', { minutes: Math.floor(seconds / 60) });
+    return T.t('status.ago_hours', {
+      hours: Math.floor(seconds / 3600),
+      minutes: Math.floor((seconds % 3600) / 60)
+    });
+  }
+
+  function lastVisit(visit) {
+    // The only fact on this card that is observed rather than predicted: a
+    // request really did arrive from something that is not this computer.
+    if (!visit) return T.t('status.network_last_visit_none');
+    const elapsed = ago(visit.at);
+    if (!elapsed) return null;
+    return T.t(visit.by_name
+      ? 'status.network_last_visit_by_name'
+      : 'status.network_last_visit_by_number', { host: visit.host, ago: elapsed });
+  }
+
+  function addressLine(url) {
+    const line = el('div', 'status-address');
+    const link = el('a', 'mono', url);
+    link.href = url;
+    line.appendChild(link);
+
+    // Typing `https://Edwin-Castillo.local:8000` into a phone by hand is where
+    // this goes wrong; copying it is one tap. `navigator.clipboard` exists only
+    // in a secure context, and this page is served over plain http on the LAN
+    // whenever HTTPS is off — so the button is offered only where it works.
+    if (navigator.clipboard && window.isSecureContext) {
+      const button = el('button', 'btn btn--ghost btn--sm', T.t('status.copy'));
+      button.type = 'button';
+      button.addEventListener('click', function () {
+        navigator.clipboard.writeText(url).then(function () {
+          button.textContent = T.t('status.copied');
+          setTimeout(function () { button.textContent = T.t('status.copy'); }, 2000);
+        }).catch(function () { /* a refused clipboard is not worth an error */ });
+      });
+      line.appendChild(button);
+    }
+    return line;
+  }
+
   function uptime(seconds) {
     if (!seconds && seconds !== 0) return null;
     const hours = Math.floor(seconds / 3600);
@@ -180,19 +238,8 @@
         fact(facts, 'status.network_listening', item.listening_on);
         fact(facts, 'status.network_https',
           T.t(item.https ? 'status.network_https_on' : 'status.network_https_off'));
-        if ((item.addresses || []).length) {
-          // The whole point of this card: the address to type into the phone,
-          // read off the screen instead of guessed from `ipconfig`.
-          facts.appendChild(el('dt', null, T.t('status.network_addresses')));
-          const holder = el('dd');
-          item.addresses.forEach(function (url) {
-            const link = el('a', 'mono', url);
-            link.href = url;
-            link.style.display = 'block';
-            holder.appendChild(link);
-          });
-          facts.appendChild(holder);
-        }
+        if (item.profile) fact(facts, 'status.network_profile', profileText(item.profile));
+        fact(facts, 'status.network_last_visit', lastVisit(item.last_visit));
         break;
       case 'startup':
         fact(facts, 'status.reason', reason(item.error));
@@ -201,7 +248,34 @@
         break;
     }
     if (facts.childElementCount) card.appendChild(facts);
+    networkHints(card, item);
     return card;
+  }
+
+  function networkHints(card, item) {
+    if (item.key !== 'network') return;
+
+    // The whole point of this card: the address to type into the phone, read
+    // off the screen instead of guessed from `ipconfig`. It sits below the
+    // list of facts rather than inside it, because an address squeezed into
+    // the narrow right-hand column wraps one character per line.
+    if ((item.addresses || []).length) {
+      const block = el('div', 'status-addresses');
+      block.appendChild(el('div', 'card__meta', T.t('status.network_addresses')));
+      item.addresses.forEach(function (url) {
+        block.appendChild(addressLine(url));
+      });
+      card.appendChild(block);
+    }
+
+    // A warning that does not say what to do about it is just bad news, and
+    // "your network is public" means nothing to somebody who never chose it.
+    if (item.profile && item.profile.category === 'public') {
+      card.appendChild(el('p', 'hint', T.t('status.network_public_help')));
+    }
+    if (item.last_visit && item.last_visit.by_name) {
+      card.appendChild(el('p', 'hint', T.t('status.network_name_works')));
+    }
   }
 
   async function loadStatus() {

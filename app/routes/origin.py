@@ -48,14 +48,24 @@ def _hostname(value: str) -> str:
     if not value:
         return ""
     if "//" in value:
-        value = urlsplit(value).netloc
+        try:
+            value = urlsplit(value).netloc
+        except ValueError:
+            # An unterminated bracket — `http://[::1` — makes `urlsplit` raise.
+            # Refusing is the answer; letting it out of here turns the guard
+            # into a 500 generator with a traceback per request.
+            return ""
     if "@" in value:
         return ""                             # never a header a browser sends
     if value.startswith("["):                 # bracketed IPv6, possibly :port
         return value.partition("]")[0] + "]"
     if value.count(":") > 1:                  # bare IPv6 literal, no port
         return value
-    return value.rsplit(":", 1)[0] if ":" in value else value
+    host = value.rsplit(":", 1)[0] if ":" in value else value
+    # `Edwin-Castillo.local.` — an absolute name — is the same name. Browsers
+    # keep the trailing dot in `Host`, and refusing it would refuse the very
+    # address this is meant to accept.
+    return host[:-1] if host.endswith(".") and len(host) > 1 else host
 
 
 def is_local(value: str) -> bool:
@@ -85,11 +95,78 @@ def is_acceptable_host(value: str) -> bool:
 
     if host == _hostname(BOUND_HOST).lower():
         return True
+
+    # An address cannot be re-pointed, so it is checked first: it is the common
+    # case, it is free, and it settles the request without consulting anything.
     try:
         ipaddress.ip_address(host.strip("[]"))
         return True
     except ValueError:
+        pass
+
+    return _is_our_own_name(host)
+
+
+def _is_our_own_name(host: str) -> bool:
+    """This machine's `.local` name — and only under HTTPS, deliberately.
+
+    Reaching the application by name is the one address that survives the
+    router handing out a different number, so it has to be accepted. But a name
+    is exactly what DNS rebinding needs, and on a network full of strangers the
+    protocols that resolve a local name — mDNS, LLMNR, NetBIOS — are
+    unauthenticated broadcasts: any device on the café Wi-Fi can answer for
+    `edwin-castillo` and become that origin in the user's browser, then hand
+    the page to us as same-site.
+
+    Two things close that:
+
+    * Only the `.local` form is accepted. The bare single-label name is never
+      advertised by this application (System Status offers `.local` only), so
+      accepting it would be attack surface bought for nothing.
+    * Only when TLS is on. An impostor can claim the name, but it cannot
+      present a certificate this machine's authority signed, so it can never
+      establish the `https://…​.local:8000` origin it would need to be believed.
+      With TLS off the name buys no notifications anyway — that is the whole
+      reason HTTPS exists here — so nothing is lost by refusing it.
+    """
+    from app.services.certificates import host_names
+
+    if not _tls_on():
         return False
+
+    return host in {
+        name.lower() for name in host_names() if name.lower().endswith(".local")
+    }
+
+
+_tls: bool | None = None
+
+
+def _tls_on() -> bool:
+    """Whether this process is serving TLS. Read once, on purpose.
+
+    `https_enabled()` opens the database. This runs on every request that
+    arrives by name — which is every request the phone makes — so asking the
+    disk each time would put a file open on the hot path for an answer that
+    cannot change: the certificate is chosen before the port is bound, so it is
+    on or off for the life of the process.
+    """
+    global _tls
+    if _tls is None:
+        from app.desktop.network import https_enabled
+
+        try:
+            _tls = bool(https_enabled())
+        except Exception:  # noqa: BLE001 - a guard that cannot decide, refuses
+            logger.warning("Could not tell whether TLS is on; refusing name access")
+            _tls = False
+    return _tls
+
+
+def forget_tls() -> None:
+    """Used by the tests, and by anything that changes the setting."""
+    global _tls
+    _tls = None
 
 
 def _is_us(value: str, request: Request) -> bool:
@@ -139,6 +216,11 @@ def is_acceptable(request: Request) -> bool:
 
 async def origin_middleware(request: Request, call_next):
     if is_acceptable(request):
+        # Noted here, on the accept path, so that a refused cross-site request
+        # is never reported as a device that reached the application.
+        from app.services.reach import note_request
+
+        note_request(request)
         return await call_next(request)
 
     logger.warning(

@@ -71,22 +71,65 @@ def paths() -> Bundle:
 
 
 def _names() -> list[str]:
-    """Every address this machine can be reached at, right now."""
-    import socket
+    """Every address this machine can be reached at, right now.
 
+    The machine's own name is included, and so is its `.local` form, because a
+    name is the one address that does not change. A router handing this computer
+    a different number is not an edge case — it happens on its own, and when it
+    does the phone treats the new number as a completely different website:
+    the notification permission, the installed application and the session all
+    belonged to the old one. A name survives that.
+    """
     from app.desktop.network import local_addresses
 
     names = ["localhost", "127.0.0.1"]
     for address in local_addresses():
         if address not in names:
             names.append(address)
+
+    for name in host_names():
+        if name not in names:
+            names.append(name)
+    return names
+
+
+def host_names() -> list[str]:
+    """This machine's own name, plain and in the `.local` form phones resolve.
+
+    Windows allows accents in a computer name — `PC-Muñoz` is a perfectly
+    ordinary thing for a Spanish speaker to call their laptop — and a
+    certificate cannot carry one: `x509.DNSName` demands an A-label and raises
+    otherwise. Since this is called while the certificate is being built, before
+    the port is bound, an unencodable name would not degrade anything: it would
+    stop the application from starting at all. So it is encoded, and dropped if
+    it will not encode.
+    """
+    import socket
+
     try:
         hostname = socket.gethostname()
-        if hostname and hostname not in names:
-            names.append(hostname)
     except OSError:  # pragma: no cover
-        pass
-    return names
+        return []
+    if not hostname:
+        return []
+
+    hostname = _ascii_name(hostname.split(".")[0])
+    if not hostname:
+        return []
+    return [hostname, f"{hostname}.local"]
+
+
+def _ascii_name(name: str) -> str:
+    """`PC-Muñoz` → `xn--pc-muoz-2za`, and "" for anything unusable."""
+    if name.isascii():
+        return name
+    try:
+        return name.encode("idna").decode("ascii")
+    except (UnicodeError, ValueError):
+        logger.warning(
+            "This computer's name cannot go in a certificate; using addresses only"
+        )
+        return ""
 
 
 def _san(names: list[str]):

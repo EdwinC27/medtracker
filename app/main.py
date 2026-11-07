@@ -113,7 +113,8 @@ app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 # The optional app lock, enforced in one place rather than remembered by every
 # route. It does nothing at all unless the user has switched it on.
 app.middleware("http")(lock_middleware)
-# And the guard that keeps another website from driving this one.
+# And the guard that keeps another website from driving this one. It also notes
+# that a device other than this computer got through, on its accept path.
 app.middleware("http")(origin_middleware)
 # Outermost, so it sees the final status code of everything that got through.
 app.middleware("http")(revision_middleware)
@@ -152,6 +153,31 @@ async def unhandled_error_handler(_request: Request, exc: Exception):
     )
 
 
+def _tls_options() -> dict:
+    """The certificate to serve, or nothing at all.
+
+    Deliberately forgiving: a certificate that cannot be built — an unwritable
+    folder, a computer name no certificate can carry — must cost the user
+    notifications on the phone, not the application. Starting on plain HTTP
+    with a warning in the log is recoverable; refusing to start is not, and
+    everything on this page is about medication.
+    """
+    from app.desktop import network
+
+    if not network.https_enabled():
+        return {}
+    try:
+        from app.services.certificates import ensure
+
+        bundle = ensure()
+    except Exception as exc:  # noqa: BLE001 - reported, never fatal
+        logger.error("Could not prepare the certificate; serving plain HTTP: %s", exc)
+        return {}
+
+    logger.info("Serving TLS with %s", bundle.certificate)
+    return {"ssl_certfile": str(bundle.certificate), "ssl_keyfile": str(bundle.key)}
+
+
 def run() -> None:
     import uvicorn
 
@@ -169,14 +195,7 @@ def run() -> None:
 
     system_status.mark_bound(host)
 
-    options = {}
-    if network.https_enabled():
-        from app.services.certificates import ensure
-
-        bundle = ensure()
-        options["ssl_certfile"] = str(bundle.certificate)
-        options["ssl_keyfile"] = str(bundle.key)
-        logger.info("Serving TLS with %s", bundle.certificate)
+    options = _tls_options()
 
     uvicorn.run(app, host=host, port=PORT, log_level="info", **options)
 

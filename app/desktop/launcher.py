@@ -150,16 +150,12 @@ class ServerHandle:
         # No reloader, no dev server: the packaged application runs the same
         # ASGI app through a plain uvicorn Server object, on the socket that is
         # already ours.
-        options = {}
-        from app.desktop.network import https_enabled
+        # One place decides whether TLS is served, and what to do when the
+        # certificate cannot be made — the .exe and `start.bat` must not differ
+        # on a question like that.
+        from app.main import _tls_options
 
-        if https_enabled():
-            from app.services.certificates import ensure
-
-            bundle = ensure()
-            options["ssl_certfile"] = str(bundle.certificate)
-            options["ssl_keyfile"] = str(bundle.key)
-            logger.info("Serving TLS with %s", bundle.certificate)
+        options = _tls_options()
 
         config = uvicorn.Config(
             app, host=self.host, port=self.port, log_level="info",

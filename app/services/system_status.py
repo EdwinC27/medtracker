@@ -333,7 +333,7 @@ def _network(settings) -> dict:
     running `ipconfig` and guessing which of the four answers is the right one.
     """
     from app.config import PORT
-    from app.desktop.network import EVERY_INTERFACE, local_addresses
+    from app.desktop.network import EVERY_INTERFACE
 
     wanted = bool(settings.network_access)
     listening = _listening_on()
@@ -347,20 +347,91 @@ def _network(settings) -> dict:
         "listening_on": listening,
         "port": PORT,
         "local_url": f"http://127.0.0.1:{PORT}",
-        "addresses": [
-            f"{'https' if https_enabled() else 'http'}://{address}:{PORT}"
-            for address in local_addresses()
-        ] if open_now else [],
+        "addresses": _reachable_at() if open_now else [],
         # A change of this setting only takes effect on the next start: the port
         # is bound before the application is in a position to read it.
         "restart_required": wanted != open_now,
+        "profile": _network_profile() if open_now else None,
+        "last_visit": _last_visit() if open_now else None,
     }
 
     if wanted != open_now:
         return _component("network", WARNING, "status.network_restart_required", **facts)
     if open_now:
+        # A Public network is not a broken application, but it is the reason the
+        # phone will fail, and saying "everything is fine" while Windows quietly
+        # drops every incoming connection would be the least useful thing this
+        # page could do.
+        #
+        # Unless another device has just been here. Then the prediction is
+        # simply wrong — Windows asks once whether to allow the program on
+        # public networks too, and somebody who said yes has a public profile
+        # and a working phone. Something that happened beats something that
+        # ought to happen, so the warning yields to it.
+        if (
+            facts["profile"]
+            and facts["profile"]["category"] == "public"
+            and not _visited_recently(facts["last_visit"])
+        ):
+            return _component("network", WARNING, "status.network_public_profile", **facts)
         return _component("network", OK, "status.network_open", **facts)
     return _component("network", DISABLED, "status.network_local_only", **facts)
+
+
+def _network_profile() -> dict | None:
+    """Whether Windows considers this network Public — which blocks the phone."""
+    from app.desktop import netprofile
+
+    try:
+        blocking = netprofile.blocks_other_devices()
+    except Exception as exc:  # noqa: BLE001 - a status page never fails over a detail
+        logger.warning("System Status: could not read the network profile: %s", exc)
+        return None
+    if blocking is not None:
+        return blocking.to_dict()
+
+    connected = [profile for profile in netprofile.current() if profile.connected]
+    return connected[0].to_dict() if connected else None
+
+
+def _last_visit() -> dict | None:
+    """The one fact here that is observed rather than predicted."""
+    from app.services import reach
+
+    visit = reach.last()
+    return visit.to_dict() if visit else None
+
+
+# Long enough that a phone used a few minutes ago still counts, short enough
+# that a visit from the previous network does not vouch for this one.
+RECENT_VISIT_MINUTES = 15
+
+
+def _visited_recently(visit: dict | None) -> bool:
+    if not visit:
+        return False
+    try:
+        when = datetime.fromisoformat(visit["at"])
+    except (KeyError, TypeError, ValueError):  # pragma: no cover - defensive
+        return False
+    return now_local() - when < timedelta(minutes=RECENT_VISIT_MINUTES)
+
+
+def _reachable_at() -> list[str]:
+    """Where to point a phone, name first.
+
+    The name is offered ahead of the numbers on purpose: a router changes the
+    number by itself, and when it does the phone loses the notification
+    permission, the installed application and the session, because to a browser
+    a different address is a different site altogether.
+    """
+    from app.config import PORT
+    from app.desktop.network import https_enabled, local_addresses
+    from app.services.certificates import host_names
+
+    scheme = "https" if https_enabled() else "http"
+    names = [name for name in host_names() if name.endswith(".local")]
+    return [f"{scheme}://{where}:{PORT}" for where in names + list(local_addresses())]
 
 
 def _listening_on() -> str:

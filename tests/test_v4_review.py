@@ -1088,3 +1088,45 @@ def test_no_test_asserts_against_the_live_interpreter_path():
             if re.search(r"\bsys\.executable\b", stripped) and "monkeypatch" not in stripped:
                 offenders.append(f"{path.name}:{number}: {stripped[:70]}")
     assert not offenders, "assertions that depend on this machine:\n" + "\n".join(offenders)
+
+
+def test_no_test_calls_the_real_hostname():
+    """The same trap, one door along.
+
+    The machine's name is now part of the certificate and of the addresses the
+    status page offers, so a test that reaches the real `gethostname()` or the
+    unpatched `host_names()` passes here and fails on his machine, where the
+    name is different — and where an accent in it would fail differently again.
+
+    Whole test functions are examined rather than single lines: the damage is
+    done by the call, and a test that pins `gethostname` on one line and calls
+    `host_names()` three lines later is correct — while `names = host_names()`
+    with the assertion on the next line would slip past a line-by-line check.
+    So the rule is per function: if it reaches either of those, it must also
+    use `monkeypatch`. Docstrings, which talk about all of this at length, are
+    not code and are removed first.
+    """
+    import ast
+    import re
+
+    pattern = re.compile(r"\b(gethostname|host_names)\s*\(")
+    root = Path(__file__).resolve().parent
+    offenders = []
+    for path in sorted(root.glob("test_*.py")):
+        source = path.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            body = node.body
+            if body and isinstance(body[0], ast.Expr) and isinstance(
+                body[0].value, ast.Constant
+            ) and isinstance(body[0].value.value, str):
+                body = body[1:]                      # the docstring is not code
+            code = "\n".join(
+                segment for segment in (ast.get_source_segment(source, item) for item in body)
+                if segment
+            )
+            if pattern.search(code) and "monkeypatch" not in code:
+                offenders.append(f"{path.name}:{node.lineno}: {node.name}")
+    assert not offenders, "tests that depend on this machine:\n" + "\n".join(offenders)
